@@ -1313,28 +1313,38 @@ struct NodeFreeVisitor : NodeVisitor
 		delete node->right;
 	}
 
-	void visit(ValueNode* node)
-    {
+	void visit(ValueNode* node) {}
+	void visit(VariableDeclNode* node) {}
 
-    }
-
-	void visit(VariableDeclNode* node)
-	{
-
-	}
 	void visit(AssignmentNode* node)
 	{
-
+        node->value->visit(this);
+        delete node->value;
 	}
 
 	void visit(FunctionNode* node)
 	{
+		for (auto&& n : node->args)
+		{
+			n->visit(this);
+			delete n;
+		}
 
+		node->args.clear();
+
+        node->block->visit(this);
+        delete node->block;
 	}
 
 	void visit(CallNode* node)
 	{
+		for (auto&& n : node->args)
+		{
+			n->visit(this);
+			delete n;
+		}
 
+		node->args.clear();
 	}
 
 	void visit(IfNode* node)
@@ -1368,14 +1378,8 @@ struct NodeFreeVisitor : NodeVisitor
         if(node->expr != NULL) delete node->expr;
     }
 
-	void visit(BreakNode* node)
-    {
-    }
-
-	void visit(ContinueNode* node)
-    {
-
-    }
+	void visit(BreakNode* node) {}
+	void visit(ContinueNode* node) {}
 };
 
 enum InstructionType : std::uint8_t
@@ -1604,7 +1608,7 @@ struct VirtualMachine
                     auto it = jumpTable.find(ins.value.GetId());
                     if(it != jumpTable.end())
                     {
-                        pc = it->second;
+                        pc = it->second + 1;
                     }
                     else
                     {
@@ -1782,12 +1786,19 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(FunctionNode* node)
 	{
         program.emplace_back(INSTRUCTION_START_SUBROUTINE, Value(node->id.text));
+
+        int64_t start = program.size();
+        program.emplace_back(INSTRUCTION_JUMP, Value((int64_t)0));
+
         for(Node* arg : node->args)
         {
             arg->visit(this);
         }
 
         node->block->visit(this);
+        program.emplace_back(INSTRUCTION_RETURN_FROM_SUBROUTINE);
+
+        program.at(start).value = (int64_t)program.size();
 	}
 
 	void visit(CallNode* node)

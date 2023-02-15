@@ -3,4 +3,6 @@ func factorial(n : s32) {
     return n * factorial(n - 1);
 }
 
+factorial(12);
+
 alive : bool = true;
