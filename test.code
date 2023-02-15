@@ -1,0 +1,6 @@
+func factorial(n : s32) {
+    if n == 0 { return 1; }
+    return n * factorial(n - 1);
+}
+
+alive : bool = true;
