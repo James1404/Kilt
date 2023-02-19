@@ -1,1 +1,22 @@
-if 25 != 2 { -25; }
+func factorial(n : int) : int {
+    if n == 0 { return 0; }
+    if n == 1 { return 1; }
+    return n * factorial(n - 1);
+}
+
+number := factorial(10);
+alive := true;
+
+func add_three(n1 : int, n2 : int, n3 : int) : int {
+    return n1 + n2 + n3;
+}
+
+number_two := add_three(3, 2, 1);
+
+func fibonacci(n : int) : int {
+    if n == 0 { return 0; }
+    if n == 1 { return 1; }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+fib := fibonacci(5);

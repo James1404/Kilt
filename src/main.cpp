@@ -29,6 +29,7 @@
 <argument-list> ::= <expression> (',' <expression>)*
 
 <expression> ::= string | integer | float | identifier
+<literal> ::= integer | float | string | identifier
 
 <function-call> ::= <identifier> '(' <argument-list> ')'
 */
@@ -93,7 +94,9 @@ enum TokenType
 	TOKEN_EQUAL, TOKEN_NOT,
 
 	TOKEN_EQUAL_EQUAL, TOKEN_NOT_EQUAL,
-	TOKEN_LESS, TOKEN_GREATER, TOKEN_LESS_EQUAL, TOKEN_GREATER_EQUAL
+	TOKEN_LESS, TOKEN_GREATER, TOKEN_LESS_EQUAL, TOKEN_GREATER_EQUAL,
+
+    TOKEN_AND, TOKEN_OR,
 };
 
 struct Token
@@ -619,9 +622,11 @@ TokenType GetKeyword(std::string text)
 }
 
 using TokenStream = std::vector<Token>;
-struct Lexer
+class Lexer
 {
+public:
 	TokenStream stream;
+private:
 	std::string source;
 
 	int location = 0;
@@ -662,10 +667,8 @@ struct Lexer
 		return source.at(location);
 	}
 
-	Lexer(std::string source_)
-		: source(source_)
-	{
-		int line = 0;
+    void eval() {
+        		int line = 0;
 		for (location = 0; location < source.size(); location++)
 		{
 			char c = source.at(location);
@@ -696,7 +699,6 @@ struct Lexer
 			case '*': { token.type = TOKEN_MULTIPLY; } break;
 			case '/':
 			{
-				// TODO: Implement multiline nested comments
 				if (Peek() == '/')
 				{
 					while (Peek() != '\n')
@@ -707,6 +709,33 @@ struct Lexer
 					line++;
 					continue;
 				}
+                else if(Peek() == '*')
+                {
+                    Advance();
+                    Advance();
+
+                    int nested = 1;
+                    while(nested > 0)
+                    {
+                        if(GetCurrent() == '\n')
+                        {
+                            line++;
+                        }
+
+                        if(GetCurrent() == '/' && Peek() == '*')
+                        {
+                            nested++;
+                        }
+                        else if(GetCurrent() == '*' && Peek() == '/')
+                        {
+                            nested--;
+                        }
+
+                        Advance();
+                    }
+
+                    continue;
+                }
 				else
 				{
 					token.type = TOKEN_DIVIDE;
@@ -729,6 +758,15 @@ struct Lexer
 			{
 				token.type = Match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER;
 			} break;
+
+            case '&':
+            {
+				if(Match('&')) { token.type = TOKEN_AND; break; }
+            }
+            case '|':
+            {
+				if(Match('|')) { token.type = TOKEN_OR; break; }
+            }
 
             case '"':
             {
@@ -789,6 +827,12 @@ struct Lexer
 
 			stream.push_back(token);
 		}
+    }
+public:
+	Lexer(std::string source_)
+		: source(source_)
+	{
+        eval();
 	}
 };
 
@@ -887,9 +931,8 @@ struct ValueNode : Node
 	ValueNode(Token token_, ValueType type_, bool negative_ = false)
         : token(token_), type(type_), negative(negative_)
     {}
-
 private:
-    ValueType type;
+    ValueType type = VALUE_NONE;
 public:
     void SetType(ValueType type_) {
         type = type_;
@@ -1023,17 +1066,20 @@ struct ContinueNode : Node
 
 std::map<TokenType, int> operatorprecendence =
 {
-    { TOKEN_PLUS,0 },
-    { TOKEN_MINUS,1 },
-    { TOKEN_MULTIPLY,2 },
-    { TOKEN_DIVIDE,3 },
+    { TOKEN_AND, 0 },
+    { TOKEN_OR, 0 },
 
-    { TOKEN_EQUAL_EQUAL, 4 },
-    { TOKEN_NOT_EQUAL , 5 },
-    { TOKEN_LESS, 6 },
-    { TOKEN_GREATER, 7 },
-    { TOKEN_LESS_EQUAL, 8 },
-    { TOKEN_GREATER_EQUAL, 9 },
+    { TOKEN_EQUAL_EQUAL, 1 },
+    { TOKEN_NOT_EQUAL , 1 },
+    { TOKEN_LESS, 1 },
+    { TOKEN_GREATER, 1 },
+    { TOKEN_LESS_EQUAL, 1 },
+    { TOKEN_GREATER_EQUAL, 1 },
+
+    { TOKEN_PLUS,2 },
+    { TOKEN_MINUS,3 },
+    { TOKEN_MULTIPLY,4 },
+    { TOKEN_DIVIDE,5 },
 };
 
 int GetPrecedence(Token t)
@@ -1143,25 +1189,19 @@ struct Parser
         }
         else if(AdvanceIfMatch(TOKEN_FOR))
         {
-            if(AdvanceIfMatch(TOKEN_LEFT_PARENTHESIS))
-            {
-                Node* init = VariableDecleration();
-                if(init == NULL) init = Expression();
+            Node* init = VariableDecleration();
+            if(init == NULL) init = Expression();
 
+            if(AdvanceIfMatch(TOKEN_COMMA))
+            {
+                Node* cond = Expression();
                 if(AdvanceIfMatch(TOKEN_COMMA))
                 {
-                    Node* cond = Expression();
-                    if(AdvanceIfMatch(TOKEN_COMMA))
-                    {
-                        Node* incr = Expression();
+                    Node* incr = Expression();
 
-                        if(AdvanceIfMatch(TOKEN_RIGHT_PARENTHESIS))
-                        {
-                            Node* block = StatementBlock();
+                    Node* block = StatementBlock();
 
-                            return new ForNode(init, cond, incr, block);
-                        }
-                    }
+                    return new ForNode(init, cond, incr, block);
                 }
             }
         }
@@ -1187,7 +1227,15 @@ struct Parser
 
 					return new FunctionNode(id, returntype, args_decl, block);
 				}
+                else
+                {
+                    LogError("Argument list decleration must have a closing parenthesis", id.line, id.location);
+                }
 			}
+            else
+            {
+                LogError("Function statement must have opening parenthesis", id.line, id.location);
+            }
 		}
         else if(AdvanceIfMatch(TOKEN_RETURN))
         {
@@ -1230,6 +1278,10 @@ struct Parser
             {
                 return n;
             }
+            else
+            {
+                LogError("Variable decleration must end with a semicolon", current.line, current.location);
+            }
         }
 
         if(Node* n = VariableAssignment(); n != NULL)
@@ -1238,6 +1290,10 @@ struct Parser
             {
                 return n;
             }
+            else
+            {
+                LogError("Variable assignment must end with a semicolon", current.line, current.location);
+            }
         }
 
         if(Node* n = Expression(); n != NULL)
@@ -1245,6 +1301,10 @@ struct Parser
             if(AdvanceIfMatch(TOKEN_SEMICOLON))
             {
                 return n;
+            }
+            else
+            {
+                LogError("Expression statement must end with a semicolon", current.line, current.location);
             }
         }
 
@@ -1292,6 +1352,10 @@ struct Parser
                         LogError("Value assigned to '" + id.text + "' is invalid", id.line, id.location);
                     }
                 }
+                else
+                {
+                    LogError("Variable decleration must have either specify a type of be assigned a value", id.line, id.location);
+                }
             }
         }
 
@@ -1320,7 +1384,16 @@ struct Parser
         do
         {
             arg = VariableDecleration();
-            if(arg != NULL) sequence.push_back(arg);
+            if(arg == NULL)
+            {
+                if(current.type == TOKEN_COMMA) {
+                    LogError("Agrgument decleration must precede a comma", current.line, current.location);
+                    return {};
+                }
+
+                break;
+            }
+            sequence.push_back(arg);
         }
         while(AdvanceIfMatch(TOKEN_COMMA));
 
@@ -1335,7 +1408,17 @@ struct Parser
         do
         {
             arg = Expression();
-            if(arg != NULL) sequence.push_back(arg);
+            if(arg == NULL)
+            {
+                if(current.type == TOKEN_COMMA) {
+                    LogError("Agrgument decleration must precede a comma", current.line, current.location);
+                    return {};
+                }
+
+                break;
+            }
+
+            sequence.push_back(arg);
         }
         while(AdvanceIfMatch(TOKEN_COMMA));
 
@@ -1409,8 +1492,9 @@ struct Parser
                 return new ValueNode(t, true);
             }
         }
-        else if(t.type == TOKEN_NOT)
+        else if(AdvanceIfMatch(TOKEN_NOT))
         {
+            // TODO: Implement not expression
             Node* expr = Expression();
             return expr;
         }
@@ -1420,6 +1504,10 @@ struct Parser
             if(AdvanceIfMatch(TOKEN_RIGHT_PARENTHESIS))
             {
                 return expr;
+            }
+            else
+            {
+                LogError("Grouped expression must have a closing parenthesis", current.line, current.location);
             }
         }
         else if(t.type == TOKEN_IDENTIFIER)
@@ -1570,7 +1658,7 @@ public:
             LogError("Type '" + l.GetTypeAsString() + "' is incompatible with type '" + r.GetTypeAsString() + "'", l.GetLine(), l.GetLoc());
         }
 
-        if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_GREATER_EQUAL))
+        if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_OR))
         {
             l = true;
         }
@@ -1730,6 +1818,7 @@ public:
 
 	void visit(ReturnNode* node)
     {
+        // TODO: Make sure returned value has same type as returntype.
         node->expr->visit(this);
     }
 
@@ -1861,6 +1950,8 @@ enum InstructionType : std::uint8_t
     INSTRUCTION_COMP_LESS_EQUAL, INSTRUCTION_COMP_GREATER_EQUAL,
     INSTRUCTION_COMP_EQUAL, INSTRUCTION_COMP_NOT_EQUAL,
 
+    INSTRUCTION_COMP_AND, INSTRUCTION_COMP_OR,
+
     INSTRUCTION_START_SCOPE, INSTRUCTION_END_SCOPE,
 
     INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
@@ -1921,6 +2012,9 @@ namespace std {
             case INSTRUCTION_JUMP_LOOP: { return "JUMP_LOOP"; } break;
             case INSTRUCTION_BREAK_LOOP: { return "BREAK_LOOP"; } break;
 
+            case INSTRUCTION_COMP_AND: { return "COMP_AND"; } break;
+            case INSTRUCTION_COMP_OR: { return "COMP_OR"; } break;
+
         }
 
         return "INVALID INSTRUCTION";
@@ -1933,9 +2027,21 @@ struct ScopedEnvironment
 
 	std::map<std::string, Value> identifiers;
 
+    void CreateIdentifier(std::string name)
+    {
+		identifiers[name] = (int64_t)0;
+    }
+
 	void SetIdentifier(std::string name, Value value)
 	{
-		identifiers[name] = value;
+		auto it = identifiers.find(name);
+
+		if (it != identifiers.end())
+		{
+			it->second = value;
+            return;
+		}
+        if(parent != NULL) parent->SetIdentifier(name, value);
 	}
 
 	std::optional<Value> FindIdentifier(std::string name)
@@ -2076,7 +2182,14 @@ public:
                     Value v = stack.top();
                     stack.pop();
 
-                    current->SetIdentifier(*ins.value.GetId(), v);
+                    auto id = current->FindIdentifier(*ins.value.GetId());
+                    if(id) {
+                        current->SetIdentifier(*ins.value.GetId(), v);
+                    }
+                    else {
+                        current->CreateIdentifier(*ins.value.GetId());
+                        current->SetIdentifier(*ins.value.GetId(), v);
+                    }
                 } break;
                 case INSTRUCTION_LOAD:
                 {
@@ -2301,6 +2414,23 @@ public:
                     }
                 } break;
 
+                case INSTRUCTION_COMP_AND:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    Value result = (bool)(*l.GetBool() && *r.GetBool());
+                    stack.push(result);
+                } break;
+                case INSTRUCTION_COMP_OR:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    Value result = (bool)(*l.GetBool() || *r.GetBool());
+                    stack.push(result);
+                } break;
+
                 case INSTRUCTION_START_SCOPE:
                 {
                     NewCurrent();
@@ -2309,7 +2439,6 @@ public:
                 {
                     DeleteCurrent();
                 } break;
-
 
                 case INSTRUCTION_START_LOOP:
                 {
@@ -2371,6 +2500,9 @@ struct BytecodeEmitter : NodeVisitor
             case TOKEN_GREATER: { program.emplace(INSTRUCTION_COMP_GREATER); } break;
             case TOKEN_LESS_EQUAL: { program.emplace(INSTRUCTION_COMP_LESS_EQUAL); } break;
             case TOKEN_GREATER_EQUAL: { program.emplace(INSTRUCTION_COMP_GREATER_EQUAL); } break;
+
+            case TOKEN_AND: { program.emplace(INSTRUCTION_COMP_AND); } break;
+            case TOKEN_OR: { program.emplace(INSTRUCTION_COMP_OR); } break;
 
             default:
             {
@@ -2456,6 +2588,10 @@ struct BytecodeEmitter : NodeVisitor
             program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
             node->block->visit(this);
             program.at(start).value = (int64_t)program.size();
+        }
+        else
+        {
+
         }
         // TODO: Implement else block
 	}
@@ -2557,6 +2693,8 @@ int main()
         // TODO: Automatic cast int to float if assigning to float e.g.
         // number : float = 25;
         //                   ^ this should be casted to a float
+
+        // TODO: Add more error checking.
 	}
 	else
 	{
