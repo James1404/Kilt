@@ -1,9 +1,1 @@
-func factorial(n : int) : int {
-    if n == 0 { return 0; }
-    if n == 1 { return 1; }
-    return n * factorial(n - 1);
-}
-
-
-number := factorial(12);
-alive := true;
+if 25 != 2 { -25; }

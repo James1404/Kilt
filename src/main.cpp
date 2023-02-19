@@ -9,9 +9,9 @@
 #include <variant>
 
 /* --- Language Grammar ---
-<statement> ::= "if" <condition> <statement-block> ("else" <statement-block>)?
+<statement> ::= "if" <expression> <statement-block> ("else" <statement-block>)?
 			  | "loop" <statement-block>
-			  | "for" (<variable-decleration> | <expression>) ',' <condition> ',' <expression> <statement-block>
+			  | "for" (<variable-decleration> | <expression>) ',' <expression> ',' <expression> <statement-block>
 			  | "func" <identifier> "(" <argument-list-decleration> ")" (":" <identifier)? <statement-block>?
 			  | "return" <expression> ';'
               | "break" ';'
@@ -28,7 +28,6 @@
 <argument-list-decleration> ::= <variable-decleration> (',' <variable-decleration>)*
 <argument-list> ::= <expression> (',' <expression>)*
 
-<condition> ::= <expression> ("==" | "!=" | ">=" | "<=" | ">" | "<" |) <expression>
 <expression> ::= string | integer | float | identifier
 
 <function-call> ::= <identifier> '(' <argument-list> ')'
@@ -1027,13 +1026,21 @@ std::map<TokenType, int> operatorprecendence =
     { TOKEN_PLUS,0 },
     { TOKEN_MINUS,1 },
     { TOKEN_MULTIPLY,2 },
-    { TOKEN_DIVIDE,3 }
+    { TOKEN_DIVIDE,3 },
+
+    { TOKEN_EQUAL_EQUAL, 4 },
+    { TOKEN_NOT_EQUAL , 5 },
+    { TOKEN_LESS, 6 },
+    { TOKEN_GREATER, 7 },
+    { TOKEN_LESS_EQUAL, 8 },
+    { TOKEN_GREATER_EQUAL, 9 },
 };
 
 int GetPrecedence(Token t)
 {
-    if(t.type < TOKEN_PLUS || t.type > TOKEN_MULTIPLY) return -1;
-    return operatorprecendence.at(t.type);
+    auto it = operatorprecendence.find(t.type);
+    if(it != operatorprecendence.end()) return it->second;
+    return -1;
 }
 
 struct Parser
@@ -1118,7 +1125,7 @@ struct Parser
 	{
         if (AdvanceIfMatch(TOKEN_IF))
 		{
-			Node* cond = Condition();
+			Node* cond = Expression();
 			Node* block = StatementBlock();
 			Node* elseblock = NULL;
 
@@ -1143,7 +1150,7 @@ struct Parser
 
                 if(AdvanceIfMatch(TOKEN_COMMA))
                 {
-                    Node* cond = Condition();
+                    Node* cond = Expression();
                     if(AdvanceIfMatch(TOKEN_COMMA))
                     {
                         Node* incr = Expression();
@@ -1315,7 +1322,7 @@ struct Parser
             arg = VariableDecleration();
             if(arg != NULL) sequence.push_back(arg);
         }
-        while(arg != NULL);
+        while(AdvanceIfMatch(TOKEN_COMMA));
 
 		return sequence;
 	}
@@ -1330,40 +1337,9 @@ struct Parser
             arg = Expression();
             if(arg != NULL) sequence.push_back(arg);
         }
-        while(arg != NULL);
+        while(AdvanceIfMatch(TOKEN_COMMA));
 
 		return sequence;
-	}
-
-	Node* Condition()
-	{
-		// TODO: Implement TokenNot '!'
-		Node* l = Expression();
-		Token op = current;
-
-		if(op.type == TOKEN_EQUAL_EQUAL ||
-		   op.type == TOKEN_NOT_EQUAL ||
-		   op.type == TOKEN_LESS ||
-		   op.type == TOKEN_LESS_EQUAL ||
-		   op.type == TOKEN_GREATER ||
-		   op.type == TOKEN_GREATER_EQUAL)
-		{
-			Advance();
-			Node* r = Expression();
-			if (r != NULL)
-			{
-				return new BinaryNode(l, op, r);
-			}
-
-			LogError("The right hand side of the comparison is an invalid expression", current.line, current.location);
-		}
-		else
-		{
-			LogError("Invalid operator for a comparison", op.line, op.location);
-		}
-
-		// TODO: Implement && and ||
-		return NULL;
 	}
 
 	Node* Expression()
@@ -1433,6 +1409,11 @@ struct Parser
                 return new ValueNode(t, true);
             }
         }
+        else if(t.type == TOKEN_NOT)
+        {
+            Node* expr = Expression();
+            return expr;
+        }
         else if(AdvanceIfMatch(TOKEN_LEFT_PARENTHESIS))
         {
             Node* expr = Expression();
@@ -1489,6 +1470,15 @@ struct ScopedSymbolTable {
 
 		return VALUE_NONE;
 	}
+
+    bool VariableExists(std::string name) {
+		auto it = typetable.find(name);
+		if (it != typetable.end()) return true;
+
+		if (parent != NULL) return parent->FindType(name);
+
+		return false;
+    }
 
 	std::map<std::string, FunctionData> functable;
     
@@ -1571,12 +1561,18 @@ public:
         Value r = stack.top(); stack.pop();
         Value l = stack.top(); stack.pop();
 
-        if(l.IsId()) l.GetType() = current->FindType(*l.GetId());
-        if(r.IsId()) r.GetType() = current->FindType(*r.GetId());
+        // TODO: Test if these arent neccessary.
+        //if(l.IsId()) l.GetType() = current->FindType(*l.GetId());
+        //if(r.IsId()) r.GetType() = current->FindType(*r.GetId());
 
         if(!CompareValueTypes(l, r))
         {
             LogError("Type '" + l.GetTypeAsString() + "' is incompatible with type '" + r.GetTypeAsString() + "'", l.GetLine(), l.GetLoc());
+        }
+
+        if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_GREATER_EQUAL))
+        {
+            l = true;
         }
 
         stack.push(l);
@@ -1589,11 +1585,26 @@ public:
             assignmentType = VALUE_NONE;
         }
 
-        stack.push(Value(node->token));
+        Value v(node->token);
+
+        if(node->GetType() == VALUE_ID) {
+            if(current->VariableExists(node->token.text)) {
+                v.GetType() = current->FindType(node->token.text);
+            } else {
+                LogError("Variable '" + node->token.text + "' does not exist within the current scope", node->token.line, node->token.location);
+            }
+        }
+
+        stack.push(v);
     }
 
 	void visit(VariableDeclNode* node)
 	{
+        if(current->VariableExists(node->id.text)) {
+            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
+            return;
+        }
+
         ValueType vartype = VALUE_NONE;
         if(node->infer) {
             node->value->visit(this);
@@ -1664,6 +1675,19 @@ public:
         {
             if(node->args.size() == func->args.size())
             {
+                for(int i = 0; i < node->args.size(); i++)
+                {
+                    node->args[i]->visit(this);
+
+                    Value declared = func->args.at(i);
+                    Value passed = stack.top(); stack.pop();
+
+                    if(!CompareValueTypes(declared, passed))
+                    {
+                        LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + passed.GetTypeAsString() + "'", passed.GetLine(), passed.GetLoc());
+                    }
+                }
+
                 stack.push(func->returntype);
             }
             else
@@ -1680,6 +1704,11 @@ public:
 	void visit(IfNode* node)
 	{
 		node->cond->visit(this);
+        Value cond = stack.top(); stack.pop();
+        if(!cond.IsBool()) {
+            LogError("Condition must be of boolean type", cond.GetLine(), cond.GetLoc());
+            return;
+        }
 		node->block->visit(this);
 		if (node->elseblock != NULL) node->elseblock->visit(this);
 	}
@@ -2066,19 +2095,23 @@ public:
                 case INSTRUCTION_JUMP_IF_TRUE:
                 {
                     Value v = stack.top(); stack.pop();
-                    if(*v.GetBool())
-                    {
-                        pc = *ins.value.GetInt();
-                        continue;
+                    if(v.IsBool()) {
+                        if(*v.GetBool())
+                        {
+                            pc = *ins.value.GetInt();
+                            continue;
+                        }
                     }
                 } break;
                 case INSTRUCTION_JUMP_IF_FALSE:
                 {
                     Value v = stack.top(); stack.pop();
-                    if(!*v.GetBool())
-                    {
-                        pc = *ins.value.GetInt();
-                        continue;
+                    if(v.IsBool()) {
+                        if(!*v.GetBool())
+                        {
+                            pc = *ins.value.GetInt();
+                            continue;
+                        }
                     }
                 } break;
 
@@ -2424,6 +2457,7 @@ struct BytecodeEmitter : NodeVisitor
             node->block->visit(this);
             program.at(start).value = (int64_t)program.size();
         }
+        // TODO: Implement else block
 	}
 
 	void visit(ForNode* node)
@@ -2520,6 +2554,9 @@ int main()
 		
 		NodeFreeVisitor nfv;
 		parser.tree->visit(&nfv);
+        // TODO: Automatic cast int to float if assigning to float e.g.
+        // number : float = 25;
+        //                   ^ this should be casted to a float
 	}
 	else
 	{
