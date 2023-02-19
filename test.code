@@ -1,8 +1,9 @@
-func factorial(n : s32) {
-    if n == 0 { return 1; }
+func factorial(n : int) : int {
+    if n == 0 { return 0; }
+    if n == 1 { return 1; }
     return n * factorial(n - 1);
 }
 
-factorial(12);
 
-alive : bool = true;
+number := factorial(12);
+alive := true;

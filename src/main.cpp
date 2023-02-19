@@ -38,11 +38,13 @@ bool error = false;
 void LogError(std::string msg)
 {
 	std::cout << "Error: " << msg << '\n';
+    error = true;
 }
 
 void LogError(std::string msg, int line, int location)
 {
 	std::cout << "Error: [Line: " << line << ", Location: " << location << "] " << msg << '\n';
+    error = true;
 }
 
 template<typename T>
@@ -87,8 +89,6 @@ enum TokenType
 	TOKEN_IF, TOKEN_ELSE, TOKEN_FUNC, TOKEN_FOR, TOKEN_LOOP,
 	TOKEN_RETURN, TOKEN_BREAK, TOKEN_CONTINUE,
 
-    TOKEN_TRUE, TOKEN_FALSE,
-
 	TOKEN_PLUS, TOKEN_MINUS, TOKEN_DIVIDE, TOKEN_MULTIPLY,
 
 	TOKEN_EQUAL, TOKEN_NOT,
@@ -111,7 +111,11 @@ struct Token
     Token(TokenType type_) : type(type_) {}
 };
 
-Token CreateTokenFromString(std::string v) { Token t; t.text = v; return t; }
+namespace std {
+    std::string to_string(Token other) {
+        return std::to_string(other.type) + ": " + "\"" + other.text + "\"" + '\n';
+    }
+}
 
 std::map<std::string, TokenType> keywords = {
 	{ "if", TOKEN_IF },
@@ -123,8 +127,8 @@ std::map<std::string, TokenType> keywords = {
 	{ "break", TOKEN_BREAK },
 	{ "continue", TOKEN_CONTINUE },
 
-    { "true", TOKEN_TRUE },
-    { "false", TOKEN_FALSE },
+    { "true", TOKEN_LITERAL },
+    { "false", TOKEN_LITERAL },
 };
 
 enum ValueType
@@ -133,37 +137,86 @@ enum ValueType
 
     VALUE_INT, VALUE_REAL, VALUE_STR, VALUE_BOOL,
     VALUE_ID
-} type;
+};
+
+ValueType StringToValueType(std::string type)
+{
+    if(type == "str") return VALUE_STR;
+    if(type == "int") return VALUE_INT;
+    if(type == "float") return VALUE_REAL;
+    if(type == "bool") return VALUE_BOOL;
+
+    return VALUE_NONE;
+}
+
+namespace std {
+    std::string to_string(ValueType other) {
+        switch (other)
+        {
+            case VALUE_INT: { return "int"; } break;
+            case VALUE_REAL: { return "float"; } break;
+            case VALUE_STR: { return "str"; } break;
+            case VALUE_BOOL: { return "bool"; } break;
+            case VALUE_ID: { return "id"; } break;
+        }
+        return "";
+    }
+}
 
 class Value
 {
 private:
-	ValueType type;
-    std::variant<
-        int64_t,double,bool,std::string
-    > values;
+	ValueType type = VALUE_NONE;
+    void* data = NULL;
 
-    void ParseStr(Token token)
+    void FreeData()
     {
-        values = "";
+        if(data == NULL) return;
 
-        char b = token.text.front(), e = token.text.back();
+        switch(type)
+        {
+            case VALUE_INT:
+            {
+                delete static_cast<int64_t*>(data);
+            } break;
+            case VALUE_REAL:
+            {
+                delete static_cast<double*>(data);
+            } break;
+            case VALUE_BOOL:
+            {
+                delete static_cast<bool*>(data);
+            } break;
+            case VALUE_STR:
+            {
+                delete static_cast<std::string*>(data);
+            } break;
+            case VALUE_ID:
+            {
+                delete static_cast<std::string*>(data);
+            } break;
+        }
+    }
+
+    void ParseStr(std::string text)
+    {
+        char b = text.front(), e = text.back();
         if(b == '"' && e == '"')
         {
-            std::string r = token.text;
+            std::string r = text;
             r.erase(0,1);
             r.erase(r.size(),1);
 
-            values = r;
+            data = new std::string(r);
             type = VALUE_STR;
         }
     }
 
-    void ParseInt(Token token)
+    void ParseInt(std::string text)
     {
-        for(int i = 0; i < token.text.size(); i++)
+        for(int i = 0; i < text.size(); i++)
         {
-            char c = token.text.at(i);
+            char c = text.at(i);
             if(!IsNumber(c))
             {
                 return;
@@ -171,20 +224,20 @@ private:
         }
 
         type = VALUE_INT;
-        values = std::stoll(token.text);
+        data = new int64_t(std::stoll(text));
     }
 
-    void ParseReal(Token token)
+    void ParseReal(std::string text)
     {
         bool dot_used = false;
-        for(int i = 0; i < token.text.size(); i++)
+        for(int i = 0; i < text.size(); i++)
         {
-            char c = token.text.at(i);
+            char c = text.at(i);
             if(c == '.')
             {
                 if(dot_used)
                 {
-                    LogError("Real number cannot contain two decimal points", token.line, token.location);
+                    LogError("Real number cannot contain two decimal points", linked.line, linked.location);
                     return;
                 }
 
@@ -199,34 +252,32 @@ private:
         }
 
         type = VALUE_REAL;
-        values = std::stod(token.text);
+        data = new double(std::stod(text));
     }
 
-    void ParseBool(Token token)
+    void ParseBool(std::string text)
     {
-        if(token.type == TOKEN_TRUE)
+        if(text == "true")
         {
             type = VALUE_BOOL;
-            values = true;
+            data = new bool(true);
         }
-        else if(token.type == TOKEN_FALSE)
+        else if(text == "false")
         {
             type = VALUE_BOOL;
-            values = false;
+            data = new bool(false);
         }
     }
     
-    void ParseIdentifier(Token token)
+    void ParseIdentifier(std::string text)
     {
-        values = "";
-
-        char b = token.text.front(), e = token.text.back();
+        char b = text.front(), e = text.back();
         if(b == '"' && e == '"')
         {
             return;
         }
 
-        values = token.text;
+        data = new std::string(text);
         type = VALUE_ID;
     }
 public:
@@ -236,107 +287,296 @@ public:
     bool IsBool() const { return type == VALUE_BOOL; }
     bool IsId() const { return type == VALUE_ID; }
 
-    ValueType GetType() const { return type; }
+    ValueType& GetType() { return type; }
 
-    int64_t& GetInt() { return std::get<int64_t>(values); }
-    double& GetReal() { return std::get<double>(values); }
-    std::string& GetStr() { return std::get<std::string>(values); }
-    bool& GetBool() { return std::get<bool>(values); }
-    std::string& GetId() { return std::get<std::string>(values); }
+    int64_t* GetInt() const { return static_cast<int64_t*>(data); }
+    double* GetReal() const { return static_cast<double*>(data); }
+    std::string* GetStr() const { return static_cast<std::string*>(data); }
+    bool* GetBool() const { return static_cast<bool*>(data); }
+    std::string* GetId() const { return static_cast<std::string*>(data); }
 
     void Negative()
     {
         if(IsInt())
         {
-            GetInt() = -GetInt();
+            *GetInt() = -*GetInt();
         }
         else if(IsReal())
         {
-            GetReal() = -GetReal();
+            *GetReal() = -*GetReal();
         }
         else
         {
-            LogError("Cannot negetorize type '" + GetTypeAsString() + "'");
+            LogError("Cannot negativize type '" + GetTypeAsString() + "'");
         }
     }
 
     Value() = default;
-	Value& operator=(Value& other) = default;
+
+    ~Value() {
+        FreeData();
+    }
+
+    Value(const Value& other)
+    {
+        LinkToken(other.linked);
+        type = other.type;
+
+        switch(type)
+        {
+            case VALUE_INT:
+            {
+                data = new int64_t(*other.GetInt());
+            } break;
+            case VALUE_REAL:
+            {
+                data = new double(*other.GetReal());
+            } break;
+            case VALUE_BOOL:
+            {
+                data = new bool(*other.GetBool());
+            } break;
+            case VALUE_STR:
+            {
+                data = new std::string(*other.GetStr());
+            } break;
+            case VALUE_ID:
+            {
+                data = new std::string(*other.GetId());
+            } break;
+        }
+    }
 
     Value(Token& other)
     {
-        ParseStr(other);
-        ParseIdentifier(other);
-        ParseReal(other);
-        ParseInt(other);
-        ParseBool(other);
+        LinkToken(other);
+
+        if(other.type == TOKEN_IDENTIFIER)
+        {
+            ParseIdentifier(other.text);
+        }
+        else if(other.type == TOKEN_LITERAL)
+        {
+            ParseStr(other.text);
+            ParseReal(other.text);
+            ParseInt(other.text);
+            ParseBool(other.text);
+        }
     }
 
 	Value(int64_t other)
 	{
 		type = VALUE_INT;
-		values = other;
+		data = new int64_t(other);
 	}
 
 	Value(double other)
 	{
 		type = VALUE_REAL;
-		values = other;
+		data = new double(other);
 	}
 
 	Value(std::string other)
 	{
-        ParseStr(CreateTokenFromString(other));
-        ParseIdentifier(CreateTokenFromString(other));
+        ParseStr(other);
+        ParseIdentifier(other);
 	}
 
 	Value(bool other)
 	{
 		type = VALUE_BOOL;
-		values = other;
+		data = new bool(other);
 	}
+
+    Value(ValueType type_)
+        : type(type_)
+    {
+        switch(type)
+        {
+            case VALUE_INT:
+            {
+                data = new int64_t(0);
+            } break;
+            case VALUE_REAL:
+            {
+                data = new double(0.0);
+            } break;
+            case VALUE_BOOL:
+            {
+                data = new bool(false);
+            } break;
+            case VALUE_STR:
+            {
+                data = new std::string("");
+            } break;
+            case VALUE_ID:
+            {
+                data = new std::string("");
+            } break;
+        }
+    }
+
+    Value(ValueType type_, std::string text_)
+    {
+        switch(type_)
+        {
+            case VALUE_INT:
+            {
+                ParseInt(text_);
+            } break;
+            case VALUE_REAL:
+            {
+                ParseReal(text_);
+            } break;
+            case VALUE_BOOL:
+            {
+                ParseBool(text_);
+            } break;
+            case VALUE_STR:
+            {
+                ParseStr(text_);
+            } break;
+            case VALUE_ID:
+            {
+                ParseIdentifier(text_);
+            } break;
+            default:
+            {
+                ParseIdentifier(text_);
+                ParseStr(text_);
+                ParseReal(text_);
+                ParseInt(text_);
+                ParseBool(text_);
+            }
+        }
+    }
+
+	Value& operator=(Value& other)
+    {
+        FreeData();
+        LinkToken(other.linked);
+        type = other.type;
+
+        switch(type)
+        {
+            case VALUE_INT:
+            {
+                data = new int64_t(*other.GetInt());
+            } break;
+            case VALUE_REAL:
+            {
+                data = new double(*other.GetReal());
+            } break;
+            case VALUE_BOOL:
+            {
+                data = new bool(*other.GetBool());
+            } break;
+            case VALUE_STR:
+            {
+                data = new std::string(*other.GetStr());
+            } break;
+            case VALUE_ID:
+            {
+                data = new std::string(*other.GetId());
+            } break;
+        }
+
+        return *this;
+    }
+
 
     Value& operator=(Token& other)
     {
-        ParseStr(other);
-        ParseIdentifier(other);
-        ParseReal(other);
-        ParseInt(other);
-        ParseBool(other);
+        LinkToken(other);
+
+        if(other.type == TOKEN_IDENTIFIER)
+        {
+            ParseIdentifier(other.text);
+        }
+        else if(other.type == TOKEN_LITERAL)
+        {
+            ParseStr(other.text);
+            ParseReal(other.text);
+            ParseInt(other.text);
+            ParseBool(other.text);
+        }
+
         return *this;
     }
 
 	Value& operator=(int64_t other)
 	{
+        FreeData();
 		type = VALUE_INT;
-		values = other;
+		data = new int64_t(other);
         return *this;
 	}
 
 	Value& operator=(double other)
 	{
+        FreeData();
 		type = VALUE_REAL;
-		values = other;
+		data = new double(other);
+        return *this;
+	}
+
+	Value& operator=(bool other)
+	{
+        FreeData();
+		type = VALUE_BOOL;
+		data = new bool(other);
         return *this;
 	}
 
 	Value& operator=(const char* other)
 	{
-		type = VALUE_STR;
-		values = other;
+        FreeData();
+        ParseStr(std::string(other));
+        ParseIdentifier(std::string(other));
+
         return *this;
 	}
 
 	Value& operator=(std::string other)
 	{
-        ParseStr(CreateTokenFromString(other));
-        ParseIdentifier(CreateTokenFromString(other));
+        FreeData();
+        ParseStr(other);
+        ParseIdentifier(other);
         return *this;
 	}
+
+    Value& operator=(ValueType type_)
+    {
+        FreeData();
+        type = type_;
+        switch(type)
+        {
+            case VALUE_INT:
+            {
+                data = new int64_t(0);
+            } break;
+            case VALUE_REAL:
+            {
+                data = new double(0.0);
+            } break;
+            case VALUE_BOOL:
+            {
+                data = new bool(false);
+            } break;
+            case VALUE_STR:
+            {
+                data = new std::string("");
+            } break;
+            case VALUE_ID:
+            {
+                data = new std::string("");
+            } break;
+        }
+
+        return *this;
+    }
 private:
     Token linked;
-
-    friend bool CompareValueTypes(Value l, Value r);
 public:
     void LinkToken(const Token t)
     {
@@ -348,49 +588,29 @@ public:
 
     std::string GetTypeAsString() const
     {
-        if(IsInt()) return "int";
-        if(IsReal()) return "float";
-        if(IsStr()) return "string";
-        if(IsBool()) return "bool";
-        if(IsId()) return "identifier";
-        return "";
+        return std::to_string(type);
     }
 };
 
+namespace std {
+    std::string to_string(Value other) {
+        switch (other.GetType())
+        {
+            case VALUE_INT: { return std::to_string(*other.GetInt()) + ": " + std::to_string(other.GetType()); } break;
+            case VALUE_REAL: { return std::to_string(*other.GetReal()) + ": " + std::to_string(other.GetType()); } break;
+            case VALUE_STR: { return *other.GetStr() + ": " + std::to_string(other.GetType()); } break;
+            case VALUE_BOOL: { return (std::string)(*other.GetBool() ? "true" : "false") + ": " + std::to_string(other.GetType()); } break;
+            case VALUE_ID: { return *other.GetId() + ": " + std::to_string(other.GetType()); } break;
+        }
+        return "";
+    }
+}
+
+
 bool CompareValueTypes(Value l, Value r)
 {
-    return l.type == r.type;
+    return l.GetType() == r.GetType();
 }
-
-Value StringToValue(std::string type)
-{
-    if(type == "string") return Value("");
-    if(type == "int") return Value((int64_t)0);
-    if(type == "float") return Value(0.0);
-    if(type == "bool") return Value(true);
-
-    return Value();
-}
-
-struct SymbolTable
-{
-	std::map<std::string, std::string> typetable;
-
-	void SetType(std::string name, std::string type)
-	{
-		typetable[name] = type;
-	}
-
-	std::string FindType(std::string name)
-	{
-		auto it = typetable.find(name);
-		if (it != typetable.end()) return it->second;
-
-		return "";
-	}
-};
-
-static SymbolTable table;
 
 TokenType GetKeyword(std::string text)
 {
@@ -454,7 +674,7 @@ struct Lexer
 			Token token;
 			token.location = location;
 			token.size = 1;
-			token.line = 0;
+			token.line = line;
 
 			token.text = source.substr(token.location, token.size);
 
@@ -574,6 +794,7 @@ struct Lexer
 };
 
 struct Node;
+struct ScopeNode;
 struct SequenceNode;
 struct BinaryNode;
 struct ValueNode;
@@ -590,6 +811,7 @@ struct ContinueNode;
 
 struct NodeVisitor
 {
+	virtual void visit(ScopeNode* node) = 0;
 	virtual void visit(SequenceNode* node) = 0;
 	virtual void visit(BinaryNode* node) = 0;
 	virtual void visit(ValueNode* node) = 0;
@@ -605,20 +827,31 @@ struct NodeVisitor
 	virtual void visit(ContinueNode* node) = 0;
 };
 
-#define SHOW_FREED_MEMORY false
+#define PRINT_FREED_MEMORY false
 struct Node
 {
 	virtual void visit(NodeVisitor* visitor) = 0;
 
     ~Node()
 	{
-#if SHOW_FREED_MEMORY
+#if PRINT_FREED_MEMORY
 		std::cout << "Freed memory " << this << '\n';
 #endif
 	}
 };
 
 #define VISIT_ virtual void visit(NodeVisitor* v) { v->visit(this); } 
+
+struct ScopeNode : Node
+{
+    Node* statement;
+
+	ScopeNode(Node* statement_)
+		: statement(statement_)
+	{}
+
+	VISIT_
+};
 
 struct SequenceNode : Node
 {
@@ -645,12 +878,26 @@ struct BinaryNode : Node
 
 struct ValueNode : Node
 {
-    Value value;
+    Token token;
+    bool negative = false;
 
-	ValueNode(Token token_, bool negative = false)
-    {
-        value = token_;
-        if(negative) value.Negative();
+	ValueNode(Token token_, bool negative_ = false)
+        : token(token_), negative(negative_)
+    {}
+
+	ValueNode(Token token_, ValueType type_, bool negative_ = false)
+        : token(token_), type(type_), negative(negative_)
+    {}
+
+private:
+    ValueType type;
+public:
+    void SetType(ValueType type_) {
+        type = type_;
+    }
+
+    ValueType GetType() {
+        return type;
     }
 
 	VISIT_
@@ -659,9 +906,15 @@ struct ValueNode : Node
 struct VariableDeclNode : Node
 {
 	Token id, type;
+    Node* value;
+    bool infer;
 
-	VariableDeclNode(Token id_, Token type_)
-		: id(id_), type(type_)
+	VariableDeclNode(Token id_, Token type_, Node* value_ = NULL)
+		: id(id_), type(type_), value(value_), infer(false)
+	{}
+
+	VariableDeclNode(Token id_, Node* value_ = NULL)
+		: id(id_), type(), value(value_), infer(true)
 	{}
     
 	VISIT_
@@ -850,7 +1103,7 @@ struct Parser
 
 			if (AdvanceIfMatch(TOKEN_RIGHT_BRACE))
 			{
-				return lst;
+				return new ScopeNode(lst);
 			}
 			else
 			{
@@ -994,7 +1247,6 @@ struct Parser
 
     Node* VariableDecleration()
     {
-        
         if(Token id = current; id.type == TOKEN_IDENTIFIER)
         {
             if(Peek().type == TOKEN_COLON)
@@ -1010,14 +1262,27 @@ struct Parser
                     {
                         if(Node* value = Expression(); value != NULL)
                         {
-                            Node* decl = new VariableDeclNode(id, type);
-                            Node* assgn = new AssignmentNode(id, value);
-                            return new SequenceNode({decl,assgn});
+                            return new VariableDeclNode(id, type, value);
+                        }
+                        else
+                        {
+                            LogError("Value assigned to '" + id.text + "' is invalid", id.line, id.location);
                         }
                     }
                     else
                     {
                         return new VariableDeclNode(id, type);
+                    }
+                }
+                else if(AdvanceIfMatch(TOKEN_EQUAL))
+                {
+                    if(Node* value = Expression(); value != NULL)
+                    {
+                        return new VariableDeclNode(id, value);
+                    }
+                    else
+                    {
+                        LogError("Value assigned to '" + id.text + "' is invalid", id.line, id.location);
                     }
                 }
             }
@@ -1176,22 +1441,13 @@ struct Parser
                 return expr;
             }
         }
-        else if(AdvanceIfMatch(TOKEN_LITERAL))
-        {
-            return new ValueNode(t);
-        }
         else if(t.type == TOKEN_IDENTIFIER)
         {
             Node* func_call = FunctionCall();
             if(func_call != NULL) return func_call;
 
             Advance();
-            return new ValueNode(t);
-        }
-        else if(AdvanceIfMatch(TOKEN_TRUE) ||
-                AdvanceIfMatch(TOKEN_FALSE))
-        {
-            return new ValueNode(t);
+            return new ValueNode(t, VALUE_ID);
         }
         // TODO: Add array literal
 
@@ -1199,9 +1455,105 @@ struct Parser
 	}
 };
 
-struct TypeChecker : NodeVisitor
+struct FunctionData {
+    ValueType returntype;
+    std::vector<ValueType> args;
+
+    FunctionData() = default;
+
+    FunctionData(std::string returntype_, std::vector<ValueType> args_)
+        : returntype(StringToValueType(returntype_)), args(args_)
+    {}
+};
+
+struct ScopedSymbolTable {
+    ScopedSymbolTable* parent = NULL;
+
+    ScopedSymbolTable(ScopedSymbolTable* parent_ = NULL)
+        : parent(parent_)
+    {}
+
+	std::map<std::string, std::string> typetable;
+
+	void SetType(std::string name, std::string type)
+	{
+		typetable[name] = type;
+	}
+
+	ValueType FindType(std::string name)
+	{
+		auto it = typetable.find(name);
+		if (it != typetable.end()) return StringToValueType(it->second);
+
+		if (parent != NULL) return parent->FindType(name);
+
+		return VALUE_NONE;
+	}
+
+	std::map<std::string, FunctionData> functable;
+    
+	void SetFunction(std::string name, FunctionData data)
+	{
+		functable[name] = data;
+	}
+
+    std::optional<FunctionData> FindFunction(std::string name)
+	{
+		auto it = functable.find(name);
+		if (it != functable.end()) return it->second;
+
+		if (parent != NULL) return parent->FindFunction(name);
+
+		return {};
+	}
+};
+
+class TypeChecker : public NodeVisitor
 {
+private:
+    ScopedSymbolTable global, *current;
     Stack<Value> stack;
+
+    ValueType assignmentType = VALUE_NONE;
+    bool is_arg = false;
+public:
+    TypeChecker() {
+        current = &global;
+    }
+
+    ~TypeChecker()
+    {
+        while(current->parent != NULL)
+        {
+            DeleteCurrent();
+        }
+    }
+private:
+	void NewCurrent()
+	{
+		if (current == NULL) return;
+
+		ScopedSymbolTable* temp = current;
+
+		current = new ScopedSymbolTable();
+		current->parent = temp;
+	}
+
+	void DeleteCurrent()
+	{
+		if (current->parent == NULL) return;
+
+        ScopedSymbolTable* temp = current;
+		current = temp->parent;
+        delete temp;
+	}
+public:
+	void visit(ScopeNode* node)
+    {
+        NewCurrent();
+        node->statement->visit(this);
+        DeleteCurrent();
+    }
 
 	void visit(SequenceNode* node)
 	{
@@ -1219,9 +1571,12 @@ struct TypeChecker : NodeVisitor
         Value r = stack.top(); stack.pop();
         Value l = stack.top(); stack.pop();
 
+        if(l.IsId()) l.GetType() = current->FindType(*l.GetId());
+        if(r.IsId()) r.GetType() = current->FindType(*r.GetId());
+
         if(!CompareValueTypes(l, r))
         {
-            LogError("Type's invalid", l.GetLine(), l.GetLoc());
+            LogError("Type '" + l.GetTypeAsString() + "' is incompatible with type '" + r.GetTypeAsString() + "'", l.GetLine(), l.GetLoc());
         }
 
         stack.push(l);
@@ -1229,18 +1584,51 @@ struct TypeChecker : NodeVisitor
 
 	void visit(ValueNode* node)
     {
-        stack.push(node->value);
+        if(assignmentType != VALUE_NONE) {
+            node->SetType(assignmentType);
+            assignmentType = VALUE_NONE;
+        }
+
+        stack.push(Value(node->token));
     }
 
 	void visit(VariableDeclNode* node)
 	{
-        table.SetType(node->id.text, node->type.text);
+        ValueType vartype = VALUE_NONE;
+        if(node->infer) {
+            node->value->visit(this);
+            Value value = stack.top(); stack.pop();
+            vartype = value.GetType();
+        }
+        else {
+            vartype = StringToValueType(node->type.text);
+            if(vartype == VALUE_NONE) {
+                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
+                return;
+            }
+
+            if(node->value != NULL)
+            {
+                node->value->visit(this);
+                Value valuetype = stack.top(); stack.pop();
+                if(!CompareValueTypes(vartype, valuetype))
+                {
+                    LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
+                    return;
+                }
+            }
+        }
+
+        current->SetType(node->id.text, std::to_string(vartype));
+        if(is_arg) stack.push(vartype);
 	}
 
 	void visit(AssignmentNode* node)
 	{
+        Value var = current->FindType(node->id.text);
+
+        assignmentType = var.GetType();
         node->value->visit(this);
-        Value var = StringToValue(table.FindType(node->id.text));
         Value type = stack.top(); stack.pop();
         if(!CompareValueTypes(var, type))
         {
@@ -1250,12 +1638,43 @@ struct TypeChecker : NodeVisitor
 
 	void visit(FunctionNode* node)
 	{
+        NewCurrent();
+        std::vector<ValueType> args;
 
+        is_arg = true;
+        for(auto&& arg : node->args)
+        {
+            arg->visit(this);
+            Value argtype = stack.top(); stack.pop();
+            args.push_back(argtype.GetType());
+        }
+        is_arg = false;
+
+        current->parent->SetFunction(node->id.text, FunctionData(node->returntype.text, args));
+
+        node->block->visit(this);
+
+        DeleteCurrent();
 	}
 
 	void visit(CallNode* node)
 	{
-
+        auto func = current->FindFunction(node->id.text);
+        if(func)
+        {
+            if(node->args.size() == func->args.size())
+            {
+                stack.push(func->returntype);
+            }
+            else
+            {
+                LogError("Invalid arg's size: Expected '" + std::to_string(func->args.size()) + "'", node->id.line, node->id.location);
+            }
+        }
+        else
+        {
+            LogError("Function '" + node->id.text + "' does not exist within the current scope", node->id.line, node->id.location);
+        }
 	}
 
 	void visit(IfNode* node)
@@ -1267,10 +1686,12 @@ struct TypeChecker : NodeVisitor
 
 	void visit(ForNode* node)
 	{
+        NewCurrent();
 		if (node->init != NULL) node->init->visit(this);
 		if (node->cond != NULL) node->cond->visit(this);
 		if (node->incr != NULL) node->incr->visit(this);
 		node->block->visit(this);
+        DeleteCurrent();
 	}
 
 	void visit(LoopNode* node)
@@ -1294,6 +1715,12 @@ struct TypeChecker : NodeVisitor
 
 struct NodeFreeVisitor : NodeVisitor
 {
+	void visit(ScopeNode* node)
+    {
+        node->statement->visit(this);
+        delete node->statement;
+    }
+
 	void visit(SequenceNode* node)
 	{
 		for (auto&& n : node->lst)
@@ -1314,7 +1741,14 @@ struct NodeFreeVisitor : NodeVisitor
 	}
 
 	void visit(ValueNode* node) {}
-	void visit(VariableDeclNode* node) {}
+	void visit(VariableDeclNode* node)
+    {
+        if(node->value != NULL)
+        {
+            node->value->visit(this);
+            delete node->value;
+        }
+    }
 
 	void visit(AssignmentNode* node)
 	{
@@ -1397,6 +1831,10 @@ enum InstructionType : std::uint8_t
     INSTRUCTION_COMP_LESS, INSTRUCTION_COMP_GREATER,
     INSTRUCTION_COMP_LESS_EQUAL, INSTRUCTION_COMP_GREATER_EQUAL,
     INSTRUCTION_COMP_EQUAL, INSTRUCTION_COMP_NOT_EQUAL,
+
+    INSTRUCTION_START_SCOPE, INSTRUCTION_END_SCOPE,
+
+    INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
 };
 
 struct Instruction
@@ -1404,7 +1842,11 @@ struct Instruction
 	InstructionType type;
 	Value value;
 
-    Instruction(InstructionType type_, Value value_ = {})
+    Instruction(InstructionType type_)
+        : type(type_)
+    {}
+
+    Instruction(InstructionType type_, Value value_)
         : type(type_), value(value_)
     {}
 };
@@ -1415,28 +1857,8 @@ void PrintInstruction(Instruction ins)
     std::cout << '\n';
 }
 
-namespace std
-{
-    std::string to_string(Value other)
-    {
-        switch (other.GetType())
-        {
-            case VALUE_INT: { return std::to_string(other.GetInt()); } break;
-            case VALUE_REAL: { return std::to_string(other.GetReal()); } break;
-            case VALUE_STR: { return other.GetStr(); } break;
-            case VALUE_BOOL: { return other.GetBool() ? "true" : "false"; } break;
-            case VALUE_ID: { return other.GetId(); } break;
-        }
-        return "";
-    }
-
-    std::string to_string(Token other)
-    {
-	    return std::to_string(other.type) + ": " + "\"" + other.text + "\"" + '\n';
-    }
-
-    std::string to_string(Instruction other)
-    {
+namespace std {
+    std::string to_string(Instruction other) {
         switch(other.type)
         {
             case INSTRUCTION_PUSH: { return "PUSH " + std::to_string(other.value); } break;
@@ -1462,6 +1884,14 @@ namespace std
             case INSTRUCTION_COMP_GREATER_EQUAL: { return "COMP_GREATER_EQUAL"; } break;
             case INSTRUCTION_COMP_EQUAL: { return "COMP_EQUAL"; } break;
             case INSTRUCTION_COMP_NOT_EQUAL: { return "COMP_NOT_EQUAL"; } break;
+
+            case INSTRUCTION_START_SCOPE: { return "START_SCOPE"; } break;
+            case INSTRUCTION_END_SCOPE: { return "END_SCOPE"; } break;
+
+            case INSTRUCTION_START_LOOP: { return "START_LOOP"; } break;
+            case INSTRUCTION_JUMP_LOOP: { return "JUMP_LOOP"; } break;
+            case INSTRUCTION_BREAK_LOOP: { return "BREAK_LOOP"; } break;
+
         }
 
         return "INVALID INSTRUCTION";
@@ -1474,18 +1904,9 @@ struct ScopedEnvironment
 
 	std::map<std::string, Value> identifiers;
 
-	void Delete()
-	{
-		if (parent != NULL)
-		{
-			parent->Delete();
-			delete parent;
-		}
-	}
-
 	void SetIdentifier(std::string name, Value value)
 	{
-		identifiers.emplace(name, value);
+		identifiers[name] = value;
 	}
 
 	std::optional<Value> FindIdentifier(std::string name)
@@ -1501,11 +1922,47 @@ struct ScopedEnvironment
 
 		return {};
 	}
+
+    void Print()
+    {
+        std::cout << "IDENTIFIERS - VALUE\n";
+        for(auto&& [id,value] : identifiers)
+        {
+            std::cout << id << " : " << std::to_string(value) << '\n';
+        }
+    }
 };
 
-using Program = std::vector<Instruction>;
-struct VirtualMachine
+#define VM_BINARY_OP(type, l, op, r)\
+    {\
+        Value result = l.Get##type() op r.Get##type();\
+        stack.push(result);\
+    }
+
+class Program {
+private:
+    std::vector<Instruction> stream;
+public:
+    void emplace(InstructionType type) {
+        stream.push_back(Instruction(type));
+    }
+
+    void emplace(InstructionType type, Value value) {
+        stream.push_back(Instruction(type, Value(value)));
+    }
+
+    Instruction& at(size_t idx) {
+        return stream.at(idx);
+    }
+
+    size_t size() const {
+        return stream.size();
+    }
+};
+
+class VirtualMachine
 {
+private:
     using Loc = std::uint64_t;
 
 	Stack<Value> stack;
@@ -1513,17 +1970,6 @@ struct VirtualMachine
     std::map<std::string,Loc> jumpTable;
 
 	ScopedEnvironment global, *current;
-
-	VirtualMachine()
-	{
-		current = &global;
-	}
-
-	~VirtualMachine()
-	{
-		current->Delete();
-		delete current;
-	}
 
 	void NewCurrent()
 	{
@@ -1539,8 +1985,45 @@ struct VirtualMachine
 	{
 		if (current->parent == NULL) return;
 
-		current = current->parent;
+        ScopedEnvironment* temp = current;
+		current = temp->parent;
+        delete temp;
 	}
+
+public:
+	VirtualMachine()
+	{
+		current = &global;
+	}
+
+	~VirtualMachine()
+	{
+        while(current->parent != NULL)
+        {
+            DeleteCurrent();
+        }
+	}
+
+    void PrintFinalSymbolTable()
+    {
+        std::cout << "--- FINAL IDENTIFIER TABLE --- \n";
+        current->Print();
+        std::cout << "\n";
+    }
+
+    void PrintRestOfStack()
+    {
+        if(!stack.empty())
+        {
+            std::cout << "--- REST OF STACK --- \n";
+            while(!stack.empty())
+            {
+                Value v = stack.top(); stack.pop();
+                std::cout << std::to_string(v) << "\n";
+            }
+        }
+        std::cout << "\n";
+    }
 
 	void Run(Program program)
 	{
@@ -1564,11 +2047,11 @@ struct VirtualMachine
                     Value v = stack.top();
                     stack.pop();
 
-                    current->SetIdentifier(ins.value.GetId(), v);
+                    current->SetIdentifier(*ins.value.GetId(), v);
                 } break;
                 case INSTRUCTION_LOAD:
                 {
-                    auto id = current->FindIdentifier(ins.value.GetId());
+                    auto id = current->FindIdentifier(*ins.value.GetId());
                     if (id)
                     {
                         stack.push(*id);
@@ -1577,43 +2060,45 @@ struct VirtualMachine
 
                 case INSTRUCTION_JUMP:
                 {
-                    pc = ins.value.GetInt();
+                    pc = *ins.value.GetInt();
                     continue;
                 } break;
                 case INSTRUCTION_JUMP_IF_TRUE:
                 {
                     Value v = stack.top(); stack.pop();
-                    if(v.GetBool())
+                    if(*v.GetBool())
                     {
-                        pc = ins.value.GetInt();
+                        pc = *ins.value.GetInt();
                         continue;
                     }
                 } break;
                 case INSTRUCTION_JUMP_IF_FALSE:
                 {
                     Value v = stack.top(); stack.pop();
-                    if(!v.GetBool())
+                    if(!*v.GetBool())
                     {
-                        pc = ins.value.GetInt();
+                        pc = *ins.value.GetInt();
                         continue;
                     }
                 } break;
 
                 case INSTRUCTION_START_SUBROUTINE:
                 {
-                    jumpTable.emplace(ins.value.GetId(), pc + 1);
+                    jumpTable.emplace(*ins.value.GetId(), pc + 2);
                 } break;
                 case INSTRUCTION_JUMP_SUBROUTINE:
                 {
-                    auto it = jumpTable.find(ins.value.GetId());
+                    auto it = jumpTable.find(*ins.value.GetId());
                     if(it != jumpTable.end())
                     {
-                        pc = it->second + 1;
+                        returnStack.push(pc + 1);
+                        pc = it->second;
                     }
                     else
                     {
-                        LogError("Jump location doesn't exist '" + ins.value.GetId()  + "'");
+                        LogError("Jump location doesn't exist '" + *ins.value.GetId()  + "'");
                     }
+                    continue;
                 } break;
                 case INSTRUCTION_RETURN_FROM_SUBROUTINE:
                 {
@@ -1628,13 +2113,13 @@ struct VirtualMachine
 
                     if(l.IsInt())
                     {
-                        Value r = l.GetInt() + r.GetInt();
-                        stack.push(r);
+                        Value result = *l.GetInt() + *r.GetInt();
+                        stack.push(result);
                     }
                     else if(l.IsReal())
                     {
-                        Value r = l.GetReal() + r.GetReal();
-                        stack.push(r);
+                        Value result = *l.GetReal() + *r.GetReal();
+                        stack.push(result);
                     }
                 } break;
                 case INSTRUCTION_MINUS:
@@ -1644,13 +2129,13 @@ struct VirtualMachine
 
                     if(l.IsInt())
                     {
-                        Value r = l.GetInt() - r.GetInt();
-                        stack.push(r);
+                        Value result = *l.GetInt() - *r.GetInt();
+                        stack.push(result);
                     }
                     else if(l.IsReal())
                     {
-                        Value r = l.GetReal() - r.GetReal();
-                        stack.push(r);
+                        Value result = *l.GetReal() - *r.GetReal();
+                        stack.push(result);
                     }
                 } break;
                 case INSTRUCTION_MULTIPLY:
@@ -1660,13 +2145,13 @@ struct VirtualMachine
 
                     if(l.IsInt())
                     {
-                        Value r = l.GetInt() * r.GetInt();
-                        stack.push(r);
+                        Value result = *l.GetInt() * *r.GetInt();
+                        stack.push(result);
                     }
                     else if(l.IsReal())
                     {
-                        Value r = l.GetReal() * r.GetReal();
-                        stack.push(r);
+                        Value result = *l.GetReal() * *r.GetReal();
+                        stack.push(result);
                     }
                 } break;
                 case INSTRUCTION_DIVIDE:
@@ -1676,13 +2161,13 @@ struct VirtualMachine
 
                     if(l.IsInt())
                     {
-                        Value r = l.GetInt() / r.GetInt();
-                        stack.push(r);
+                        Value result = *l.GetInt() / *r.GetInt();
+                        stack.push(result);
                     }
                     else if(l.IsReal())
                     {
-                        Value r = l.GetReal() / r.GetReal();
-                        stack.push(r);
+                        Value result = *l.GetReal() / *r.GetReal();
+                        stack.push(result);
                     }
                 } break;
 
@@ -1693,22 +2178,117 @@ struct VirtualMachine
 
                     if(l.IsInt())
                     {
-                        Value r = l.GetInt() < r.GetInt();
-                        stack.push(r);
+                        Value result = (bool)(*l.GetInt() < *r.GetInt());
+                        stack.push(result);
                     }
                     else if(l.IsReal())
                     {
-                        Value r = l.GetReal() < r.GetReal();
-                        stack.push(r);
+                        Value result = (bool)(*l.GetReal() < *r.GetReal());
+                        stack.push(result);
                     }
                 } break;
                 case INSTRUCTION_COMP_GREATER:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    if(l.IsInt())
+                    {
+                        Value result = (bool)(*l.GetInt() > *r.GetInt());
+                        stack.push(result);
+                    }
+                    else if(l.IsReal())
+                    {
+                        Value result = (bool)(*l.GetReal() > *r.GetReal());
+                        stack.push(result);
+                    }
+                } break;
                 case INSTRUCTION_COMP_LESS_EQUAL:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    if(l.IsInt())
+                    {
+                        Value result = (bool)(*l.GetInt() <= *r.GetInt());
+                        stack.push(result);
+                    }
+                    else if(l.IsReal())
+                    {
+                        Value result = (bool)(*l.GetReal() <= *r.GetReal());
+                        stack.push(result);
+                    }
+                } break;
                 case INSTRUCTION_COMP_GREATER_EQUAL:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    if(l.IsInt())
+                    {
+                        Value result = (bool)(*l.GetInt() >= *r.GetInt());
+                        stack.push(result);
+                    }
+                    else if(l.IsReal())
+                    {
+                        Value result = (bool)(*l.GetReal() >= *r.GetReal());
+                        stack.push(result);
+                    }
+                } break;
                 case INSTRUCTION_COMP_EQUAL:
+                {
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    if(l.IsInt())
+                    {
+                        Value result = (bool)(*l.GetInt() == *r.GetInt());
+                        stack.push(result);
+                    }
+                    else if(l.IsReal())
+                    {
+                        Value result = (bool)(*l.GetReal() == *r.GetReal());
+                        stack.push(result);
+                    }
+                } break;
                 case INSTRUCTION_COMP_NOT_EQUAL:
                 {
-                    // TODO: Implement this
+                    Value r = stack.top(); stack.pop();
+                    Value l = stack.top(); stack.pop();
+
+                    if(l.IsInt())
+                    {
+                        Value result = (bool)(*l.GetInt() != *r.GetInt());
+                        stack.push(result);
+                    }
+                    else if(l.IsReal())
+                    {
+                        Value result = (bool)(*l.GetReal() != *r.GetReal());
+                        stack.push(result);
+                    }
+                } break;
+
+                case INSTRUCTION_START_SCOPE:
+                {
+                    NewCurrent();
+                } break;
+                case INSTRUCTION_END_SCOPE:
+                {
+                    DeleteCurrent();
+                } break;
+
+
+                case INSTRUCTION_START_LOOP:
+                {
+
+                } break;
+                case INSTRUCTION_JUMP_LOOP:
+                {
+
+                } break;
+                case INSTRUCTION_BREAK_LOOP:
+                {
+
                 } break;
 
                 default:
@@ -1726,6 +2306,13 @@ struct BytecodeEmitter : NodeVisitor
 {
     Program program;
 
+	void visit(ScopeNode* node)
+    {
+        program.emplace(INSTRUCTION_START_SCOPE);
+        node->statement->visit(this);
+        program.emplace(INSTRUCTION_END_SCOPE);
+    }
+
 	void visit(SequenceNode* node)
 	{
         for(auto&& n : node->lst)
@@ -1740,17 +2327,17 @@ struct BytecodeEmitter : NodeVisitor
         node->right->visit(this);
         switch(node->op.type)
         {
-            case TOKEN_PLUS: { program.emplace_back(INSTRUCTION_ADD); } break;
-            case TOKEN_MINUS: { program.emplace_back(INSTRUCTION_MINUS); } break;
-            case TOKEN_MULTIPLY: { program.emplace_back(INSTRUCTION_MULTIPLY); } break;
-            case TOKEN_DIVIDE: { program.emplace_back(INSTRUCTION_DIVIDE); } break;
+            case TOKEN_PLUS: { program.emplace(INSTRUCTION_ADD); } break;
+            case TOKEN_MINUS: { program.emplace(INSTRUCTION_MINUS); } break;
+            case TOKEN_MULTIPLY: { program.emplace(INSTRUCTION_MULTIPLY); } break;
+            case TOKEN_DIVIDE: { program.emplace(INSTRUCTION_DIVIDE); } break;
 
-            case TOKEN_EQUAL_EQUAL: { program.emplace_back(INSTRUCTION_COMP_EQUAL); } break;
-            case TOKEN_NOT_EQUAL: { program.emplace_back(INSTRUCTION_COMP_NOT_EQUAL); } break;
-            case TOKEN_LESS: { program.emplace_back(INSTRUCTION_COMP_LESS); } break;
-            case TOKEN_GREATER: { program.emplace_back(INSTRUCTION_COMP_GREATER); } break;
-            case TOKEN_LESS_EQUAL: { program.emplace_back(INSTRUCTION_COMP_LESS_EQUAL); } break;
-            case TOKEN_GREATER_EQUAL: { program.emplace_back(INSTRUCTION_COMP_GREATER_EQUAL); } break;
+            case TOKEN_EQUAL_EQUAL: { program.emplace(INSTRUCTION_COMP_EQUAL); } break;
+            case TOKEN_NOT_EQUAL: { program.emplace(INSTRUCTION_COMP_NOT_EQUAL); } break;
+            case TOKEN_LESS: { program.emplace(INSTRUCTION_COMP_LESS); } break;
+            case TOKEN_GREATER: { program.emplace(INSTRUCTION_COMP_GREATER); } break;
+            case TOKEN_LESS_EQUAL: { program.emplace(INSTRUCTION_COMP_LESS_EQUAL); } break;
+            case TOKEN_GREATER_EQUAL: { program.emplace(INSTRUCTION_COMP_GREATER_EQUAL); } break;
 
             default:
             {
@@ -1761,42 +2348,57 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(ValueNode* node)
     {
-        if(node->value.IsId())
+        Value value(node->GetType(), node->token.text);
+
+        if(value.IsId())
         {
-            program.emplace_back(INSTRUCTION_LOAD, node->value);
+            program.emplace(INSTRUCTION_LOAD, value);
         }
         else
         {
-            program.emplace_back(INSTRUCTION_PUSH, node->value);
+            if(node->negative) value.Negative();
+            program.emplace(INSTRUCTION_PUSH, value);
         }
     }
 
 	void visit(VariableDeclNode* node)
 	{
-        program.emplace_back(INSTRUCTION_PUSH, Value((int64_t)0));
-        program.emplace_back(INSTRUCTION_STORE, Value(node->id.text));
+        if(node->value != NULL)
+        {
+            node->value->visit(this);
+        }
+        else
+        {
+            program.emplace(INSTRUCTION_PUSH, Value((int64_t)0));
+        }
+
+        program.emplace(INSTRUCTION_STORE, Value(node->id.text));
+        previous_id = node->id.text;
 	}
 
 	void visit(AssignmentNode* node)
 	{
         node->value->visit(this);
-        program.emplace_back(INSTRUCTION_STORE, Value(node->id.text));
+        program.emplace(INSTRUCTION_STORE, Value(VALUE_ID, node->id.text));
 	}
 
+    std::string previous_id = "";
 	void visit(FunctionNode* node)
 	{
-        program.emplace_back(INSTRUCTION_START_SUBROUTINE, Value(node->id.text));
+        program.emplace(INSTRUCTION_START_SUBROUTINE, Value(node->id.text));
 
         int64_t start = program.size();
-        program.emplace_back(INSTRUCTION_JUMP, Value((int64_t)0));
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
 
-        for(Node* arg : node->args)
+        program.emplace(INSTRUCTION_START_SCOPE);
+        for(int i = node->args.size() - 1; i >= 0; i--)
         {
-            arg->visit(this);
+            node->args[i]->visit(this);
+            program.emplace(INSTRUCTION_STORE, Value(previous_id));
         }
 
         node->block->visit(this);
-        program.emplace_back(INSTRUCTION_RETURN_FROM_SUBROUTINE);
+        program.emplace(INSTRUCTION_RETURN_FROM_SUBROUTINE);
 
         program.at(start).value = (int64_t)program.size();
 	}
@@ -1807,7 +2409,9 @@ struct BytecodeEmitter : NodeVisitor
         {
             arg->visit(this);
         }
-        program.emplace_back(INSTRUCTION_JUMP_SUBROUTINE, Value(node->id.text));
+        program.emplace(INSTRUCTION_JUMP_SUBROUTINE, Value(node->id.text));
+        program.emplace(INSTRUCTION_END_SCOPE);
+        program.emplace(INSTRUCTION_END_SCOPE);
 	}
 
 	void visit(IfNode* node)
@@ -1816,7 +2420,7 @@ struct BytecodeEmitter : NodeVisitor
         if(node->elseblock == NULL)
         {
             int64_t start = program.size();
-            program.emplace_back(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
+            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
             node->block->visit(this);
             program.at(start).value = (int64_t)program.size();
         }
@@ -1824,6 +2428,8 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(ForNode* node)
 	{
+        program.emplace(INSTRUCTION_START_SCOPE);
+        program.emplace(INSTRUCTION_END_SCOPE);
 	}
 
 	void visit(LoopNode* node)
@@ -1831,12 +2437,13 @@ struct BytecodeEmitter : NodeVisitor
         int64_t start = program.size(); 
         node->block->visit(this);
         // TODO: Figure out a better way to do loop break, and continue
-        program.emplace_back(INSTRUCTION_JUMP, Value((int64_t)start));
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)start));
 	}
 
 	void visit(ReturnNode* node)
     {
-        program.emplace_back(INSTRUCTION_RETURN_FROM_SUBROUTINE);
+        if(node->expr != NULL) node->expr->visit(this);
+        program.emplace(INSTRUCTION_RETURN_FROM_SUBROUTINE);
     }
 
 	void visit(BreakNode* node)
@@ -1892,8 +2499,6 @@ int main()
 		Lexer lexer(source);
 		if (error) return 1;
 
-		PrintTokenStream(lexer.stream);
-
 		Parser parser(lexer.stream);
 		if (error) return 1;
 		
@@ -1910,6 +2515,8 @@ int main()
         VirtualMachine vm;
         vm.Run(bce.program);
 		if (error) return 1;
+        vm.PrintRestOfStack();
+        vm.PrintFinalSymbolTable();
 		
 		NodeFreeVisitor nfv;
 		parser.tree->visit(&nfv);
