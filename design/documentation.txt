@@ -1,0 +1,138 @@
+This is the documentation for the Kilt programming language.
+
+--- INTRODUCTION ---
+Kilt is a procedural, statically typed programming language designed with a similar syntax to Go,
+
+--- DATA TYPES ---
+Kilt consists of 7 built-in types:
+
+- INT -
+an integer represents whole numbers for e.g. 5, -23, 7593
+
+- FLOAT -
+represents numbers with a decimal point for e.g. 7.5, -0.5273, 52.93
+
+- BOOL -
+represents a true / false value
+
+- ARRAY -
+represents a sequence of data for e.g. [1,2,3,4,5,6,7,23,40], their type is declared as [type, size or "..." for a dynamic array]
+for e.g.
+
+// This is a fixed sized array
+People : [string, 5] = ["James", "Nathan", "Ewan", "Jake", "Frank"]
+
+// This is a dynamic array
+People : [string, ...]; // this can then be added to using the += operator
+People += "James";
+People += "Nathan";
+// -= is used to erase a character at a index
+People -= 5; // this erases the value at index 5
+
+// arrays can also be declared as a literal for e.g. [5, 25, 50, 102] this is an array literal with 4 elements using
+// this in a variable decleration allow's it to be infered as an array
+
+Ages := [17,15,47,19];
+
+// is same types as
+
+Ages : [int, 4] = [17,15,47,19];
+
+- STRING -
+a string respresents a array of characters, its formed by wrapping text with two speech marks for e.g. "hello, world!"
+
+- FUNCTION -
+a function represents a procedure that can takes a set of parameters and can returns a value
+for e.g.
+
+func Add(num1 : int, num2 : int) : int {
+	 return num1 + num2;
+}
+
+Age := Add(5,7); // Age equals 12
+
+func PI() : int { return 3.14159265359; } // function that returns the value of PI
+
+// functions can also call themselves in a recursive manner
+func fibonacci(n : int) : int {
+	 if n == 0 { return 0; }
+	 if n == 1 { return 1; }
+	 return fibonacci(n-1) + fibonacci(n-2);
+}
+
+fibonacci(12); // returns 144
+
+- CLASSES -
+these are a way to define more complex types, there are built up of members and methods, that can be called and manipulated.
+for e.g.
+
+class Person {
+	  age : int;
+	  name : string;
+
+	  func Birthday()
+	  {
+			age += 1;
+	  }
+}
+
+James : Person = {
+	  age = 17;
+	  name = "James";
+};
+
+// you can also define functions that creates a class
+func NewPerson(name : string, age : int) : Person
+{
+	return {
+		   age = age;
+		   name = name;
+	};
+}
+
+Ewan := NewPerson("Ewan", 52);
+Ewan.Birthday();
+
+// Classes can also be used in arrays
+People : [Person, 5] = [NewPerson("Ewan", 52),NewPerson("James",17),NewPerson("Natasha", 49)]
+
+-- CONTROL FLOW ---
+
+there are 3 main ways to control the flow of your application, if statements, loops, and for loops.
+
+- IF STATEMENT -
+if statements allow you to execute a branch of code depending on if a condition is met
+for e.g.
+
+if 5 > 2 {
+   // this only prints the condition is true
+   println("Greater");
+}
+else { // else can be used to execute code if the condition is not met
+	 println("Lesser");
+}
+
+- LOOPS -
+a loop is block of code that will execute indefinetely until explicitely told otherwise, using the "break" keyword
+
+i := 0;
+loop {
+	 println("Looping");
+
+	 if i > 5 { break; }
+
+	 i += 1;
+}
+
+- FOR LOOPS -
+are a form of condition loops, they consist of an initialisation, a condition, and an incremetation, all of
+which are followed by a code block
+for e.g.
+
+for i := 0, i < 25, i += 1 {
+	println(i);
+}
+// for loops work in 3 steps
+// 1: this code creates a variable called "i" and sets it to zero.
+// 2: it then checks the condition and if it is true it will then execute the code block.
+// 3: once executed it will then execute the expression in the increment slot and then jump back to step 2.
