@@ -13,10 +13,18 @@ func add_three(n1 : int, n2 : int, n3 : int) : int {
 
 number_two := add_three(3, 2, 1);
 
-func fibonacci(n : int) : int {
-    if n == 0 { return 0; }
-    if n == 1 { return 1; }
-    return fibonacci(n - 1) + fibonacci(n - 2);
+if 5 != 2 {
+    n_one := add_three(7,8,9);
+} else {
+    n_two := add_three(number_two, number, 6);
 }
 
-fib := fibonacci(5);
+fourteen := factorial(7);
+
+func fibonacci(n : int) : int {
+	 if n == 0 { return 0; }
+	 if n == 1 { return 1; }
+	 return fibonacci(n-1) + fibonacci(n-2);
+}
+
+fib := fibonacci(12);

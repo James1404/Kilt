@@ -1175,7 +1175,7 @@ struct Parser
 			Node* block = StatementBlock();
 			Node* elseblock = NULL;
 
-			if (current.type == TOKEN_ELSE)
+			if (AdvanceIfMatch(TOKEN_ELSE))
 			{
 				elseblock = StatementBlock();
 			}
@@ -1952,8 +1952,6 @@ enum InstructionType : std::uint8_t
 
     INSTRUCTION_COMP_AND, INSTRUCTION_COMP_OR,
 
-    INSTRUCTION_START_SCOPE, INSTRUCTION_END_SCOPE,
-
     INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
 };
 
@@ -1973,7 +1971,6 @@ struct Instruction
 
 void PrintInstruction(Instruction ins)
 {
-
     std::cout << '\n';
 }
 
@@ -2005,9 +2002,6 @@ namespace std {
             case INSTRUCTION_COMP_EQUAL: { return "COMP_EQUAL"; } break;
             case INSTRUCTION_COMP_NOT_EQUAL: { return "COMP_NOT_EQUAL"; } break;
 
-            case INSTRUCTION_START_SCOPE: { return "START_SCOPE"; } break;
-            case INSTRUCTION_END_SCOPE: { return "END_SCOPE"; } break;
-
             case INSTRUCTION_START_LOOP: { return "START_LOOP"; } break;
             case INSTRUCTION_JUMP_LOOP: { return "JUMP_LOOP"; } break;
             case INSTRUCTION_BREAK_LOOP: { return "BREAK_LOOP"; } break;
@@ -2021,10 +2015,8 @@ namespace std {
     }
 }
 
-struct ScopedEnvironment
+struct Environment
 {
-	ScopedEnvironment* parent;
-
 	std::map<std::string, Value> identifiers;
 
     void CreateIdentifier(std::string name)
@@ -2041,7 +2033,6 @@ struct ScopedEnvironment
 			it->second = value;
             return;
 		}
-        if(parent != NULL) parent->SetIdentifier(name, value);
 	}
 
 	std::optional<Value> FindIdentifier(std::string name)
@@ -2053,8 +2044,6 @@ struct ScopedEnvironment
 			return it->second;
 		}
 
-		if (parent != NULL) return parent->FindIdentifier(name);
-
 		return {};
 	}
 
@@ -2063,7 +2052,11 @@ struct ScopedEnvironment
         std::cout << "IDENTIFIERS - VALUE\n";
         for(auto&& [id,value] : identifiers)
         {
-            std::cout << id << " : " << std::to_string(value) << '\n';
+            char last = id.back();
+            if(last >= '1' && last <= '9') continue;
+
+            std::string n = id.substr(0, id.size()-1);
+            std::cout << n << " : " << std::to_string(value) << '\n';
         }
     }
 };
@@ -2101,48 +2094,16 @@ private:
     using Loc = std::uint64_t;
 
 	Stack<Value> stack;
-    Stack<Loc> returnStack;
+    Stack<Loc> callStack;
     std::map<std::string,Loc> jumpTable;
 
-	ScopedEnvironment global, *current;
-
-	void NewCurrent()
-	{
-		if (current == NULL) return;
-
-		ScopedEnvironment* temp = current;
-
-		current = new ScopedEnvironment();
-		current->parent = temp;
-	}
-
-	void DeleteCurrent()
-	{
-		if (current->parent == NULL) return;
-
-        ScopedEnvironment* temp = current;
-		current = temp->parent;
-        delete temp;
-	}
+	Environment env;
 
 public:
-	VirtualMachine()
-	{
-		current = &global;
-	}
-
-	~VirtualMachine()
-	{
-        while(current->parent != NULL)
-        {
-            DeleteCurrent();
-        }
-	}
-
     void PrintFinalSymbolTable()
     {
         std::cout << "--- FINAL IDENTIFIER TABLE --- \n";
-        current->Print();
+        env.Print();
         std::cout << "\n";
     }
 
@@ -2182,18 +2143,21 @@ public:
                     Value v = stack.top();
                     stack.pop();
 
-                    auto id = current->FindIdentifier(*ins.value.GetId());
+                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
+
+                    auto id = env.FindIdentifier(name);
                     if(id) {
-                        current->SetIdentifier(*ins.value.GetId(), v);
+                        env.SetIdentifier(name, v);
                     }
                     else {
-                        current->CreateIdentifier(*ins.value.GetId());
-                        current->SetIdentifier(*ins.value.GetId(), v);
+                        env.CreateIdentifier(name);
+                        env.SetIdentifier(name, v);
                     }
                 } break;
                 case INSTRUCTION_LOAD:
                 {
-                    auto id = current->FindIdentifier(*ins.value.GetId());
+                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
+                    auto id = env.FindIdentifier(name);
                     if (id)
                     {
                         stack.push(*id);
@@ -2237,7 +2201,7 @@ public:
                     auto it = jumpTable.find(*ins.value.GetId());
                     if(it != jumpTable.end())
                     {
-                        returnStack.push(pc + 1);
+                        callStack.push(pc + 1);
                         pc = it->second;
                     }
                     else
@@ -2248,7 +2212,7 @@ public:
                 } break;
                 case INSTRUCTION_RETURN_FROM_SUBROUTINE:
                 {
-                    pc = returnStack.top(); returnStack.pop();
+                    pc = callStack.top(); callStack.pop();
                     continue;
                 } break;
 
@@ -2431,15 +2395,6 @@ public:
                     stack.push(result);
                 } break;
 
-                case INSTRUCTION_START_SCOPE:
-                {
-                    NewCurrent();
-                } break;
-                case INSTRUCTION_END_SCOPE:
-                {
-                    DeleteCurrent();
-                } break;
-
                 case INSTRUCTION_START_LOOP:
                 {
 
@@ -2470,9 +2425,7 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(ScopeNode* node)
     {
-        program.emplace(INSTRUCTION_START_SCOPE);
         node->statement->visit(this);
-        program.emplace(INSTRUCTION_END_SCOPE);
     }
 
 	void visit(SequenceNode* node)
@@ -2555,7 +2508,6 @@ struct BytecodeEmitter : NodeVisitor
         int64_t start = program.size();
         program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
 
-        program.emplace(INSTRUCTION_START_SCOPE);
         for(int i = node->args.size() - 1; i >= 0; i--)
         {
             node->args[i]->visit(this);
@@ -2575,8 +2527,8 @@ struct BytecodeEmitter : NodeVisitor
             arg->visit(this);
         }
         program.emplace(INSTRUCTION_JUMP_SUBROUTINE, Value(node->id.text));
-        program.emplace(INSTRUCTION_END_SCOPE);
-        program.emplace(INSTRUCTION_END_SCOPE);
+
+        // TODO: Fix scope end problem's
 	}
 
 	void visit(IfNode* node)
@@ -2591,15 +2543,20 @@ struct BytecodeEmitter : NodeVisitor
         }
         else
         {
-
+            int64_t start = program.size();
+            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
+            node->block->visit(this);
+            int64_t end = program.size();
+            program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+            program.at(start).value = (int64_t)program.size();
+            node->elseblock->visit(this);
+            program.at(end).value = (int64_t)program.size();
         }
         // TODO: Implement else block
 	}
 
 	void visit(ForNode* node)
 	{
-        program.emplace(INSTRUCTION_START_SCOPE);
-        program.emplace(INSTRUCTION_END_SCOPE);
 	}
 
 	void visit(LoopNode* node)
