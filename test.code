@@ -5,7 +5,9 @@ func factorial(n : int) : int {
 }
 
 number := factorial(10);
-alive := true;
+
+alive : bool = true;
+inferedAlive := true;
 
 func add_three(n1 : int, n2 : int, n3 : int) : int {
     return n1 + n2 + n3;
@@ -13,7 +15,7 @@ func add_three(n1 : int, n2 : int, n3 : int) : int {
 
 number_two := add_three(3, 2, 1);
 
-if 5 != 2 {
+if 5 == 2 {
     n_one := add_three(7,8,9);
 } else {
     n_two := add_three(number_two, number, 6);
@@ -28,3 +30,16 @@ func fibonacci(n : int) : int {
 }
 
 fib := fibonacci(12);
+
+i := 0;
+loop {
+    if i < 10 {
+        i = i + 1;
+        continue;
+    }
+    else {
+        break;
+    }
+    
+    i = i * 2;
+}

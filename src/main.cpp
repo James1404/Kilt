@@ -1184,8 +1184,14 @@ struct Parser
 		}
         else if(AdvanceIfMatch(TOKEN_LOOP))
         {
-            Node* block = StatementBlock();
-            return new LoopNode(block);
+            if(Node* block = StatementBlock(); block != NULL)
+            {
+                return new LoopNode(block);
+            }
+            else
+            {
+                LogError("Loop must contain a valid statement block", current.line, current.location);
+            }
         }
         else if(AdvanceIfMatch(TOKEN_FOR))
         {
@@ -1197,11 +1203,16 @@ struct Parser
                 Node* cond = Expression();
                 if(AdvanceIfMatch(TOKEN_COMMA))
                 {
-                    Node* incr = Expression();
+                    Node* incr = VariableAssignment();
 
-                    Node* block = StatementBlock();
-
-                    return new ForNode(init, cond, incr, block);
+                    if(Node* block = StatementBlock(); block != NULL)
+                    {
+                        return new ForNode(init, cond, incr, block);
+                    }
+                    else
+                    {
+                        LogError("For loop must contain a valid statement block", current.line, current.location);
+                    }
                 }
             }
         }
@@ -1668,19 +1679,18 @@ public:
 
 	void visit(ValueNode* node)
     {
-        if(assignmentType != VALUE_NONE) {
-            node->SetType(assignmentType);
-            assignmentType = VALUE_NONE;
-        }
-
         Value v(node->token);
 
-        if(node->GetType() == VALUE_ID) {
+        if(v.GetType() == VALUE_ID) {
             if(current->VariableExists(node->token.text)) {
                 v.GetType() = current->FindType(node->token.text);
             } else {
                 LogError("Variable '" + node->token.text + "' does not exist within the current scope", node->token.line, node->token.location);
             }
+        }
+
+        if(assignmentType != VALUE_NONE) {
+            assignmentType = v.GetType();
         }
 
         stack.push(v);
@@ -1820,8 +1830,11 @@ public:
     {
         // TODO: Make sure returned value has same type as returntype.
         node->expr->visit(this);
+
+        // TODO: Make sure return is in function
     }
 
+    // TODO: Make break and continue is in a loop
 	void visit(BreakNode* node)
     {
     }
@@ -1952,7 +1965,7 @@ enum InstructionType : std::uint8_t
 
     INSTRUCTION_COMP_AND, INSTRUCTION_COMP_OR,
 
-    INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
+    //INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
 };
 
 struct Instruction
@@ -2002,9 +2015,11 @@ namespace std {
             case INSTRUCTION_COMP_EQUAL: { return "COMP_EQUAL"; } break;
             case INSTRUCTION_COMP_NOT_EQUAL: { return "COMP_NOT_EQUAL"; } break;
 
+                                             /*
             case INSTRUCTION_START_LOOP: { return "START_LOOP"; } break;
             case INSTRUCTION_JUMP_LOOP: { return "JUMP_LOOP"; } break;
             case INSTRUCTION_BREAK_LOOP: { return "BREAK_LOOP"; } break;
+            */
 
             case INSTRUCTION_COMP_AND: { return "COMP_AND"; } break;
             case INSTRUCTION_COMP_OR: { return "COMP_OR"; } break;
@@ -2088,14 +2103,14 @@ public:
     }
 };
 
+using PLoc = std::uint64_t;
 class VirtualMachine
 {
 private:
-    using Loc = std::uint64_t;
 
 	Stack<Value> stack;
-    Stack<Loc> callStack;
-    std::map<std::string,Loc> jumpTable;
+    Stack<PLoc> callStack;
+    std::map<std::string,PLoc> jumpTable;
 
 	Environment env;
 
@@ -2123,7 +2138,7 @@ public:
 
 	void Run(Program program)
 	{
-		for(Loc pc = 0; pc < program.size();)
+		for(PLoc pc = 0; pc < program.size();)
 		{
 			Instruction ins = program.at(pc);
 
@@ -2395,6 +2410,7 @@ public:
                     stack.push(result);
                 } break;
 
+                /*
                 case INSTRUCTION_START_LOOP:
                 {
 
@@ -2407,6 +2423,7 @@ public:
                 {
 
                 } break;
+                */
 
                 default:
                 {
@@ -2555,16 +2572,32 @@ struct BytecodeEmitter : NodeVisitor
         // TODO: Implement else block
 	}
 
+    PLoc loopstart, breakloc;
 	void visit(ForNode* node)
 	{
+		if (node->init != NULL) node->init->visit(this);
+        loopstart = program.size();
+		if (node->cond != NULL) node->cond->visit(this);
+        program.emplace(INSTRUCTION_JUMP_IF_TRUE, Value((int64_t)program.size() + 2));
+        breakloc = program.size();
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+		if (node->incr != NULL) node->incr->visit(this);
+		node->block->visit(this);
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
+        program.at(breakloc).value = (int64_t)program.size();
 	}
 
 	void visit(LoopNode* node)
 	{
-        int64_t start = program.size(); 
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)program.size() + 2));
+        breakloc = program.size();
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+        loopstart = program.size();
+        // TODO: Implement this.
+
         node->block->visit(this);
-        // TODO: Figure out a better way to do loop break, and continue
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)start));
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
+        program.at(breakloc).value = (int64_t)program.size();
 	}
 
 	void visit(ReturnNode* node)
@@ -2575,34 +2608,30 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(BreakNode* node)
     {
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)breakloc ));
     }
 
 	void visit(ContinueNode* node)
     {
+        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
     }
 };
 
-void PrintProgram(Program program)
-{
+void PrintProgram(Program program) {
     std::cout << " --- BYTECODE PROGRAM, SIZE: " << program.size() << " --- \n";
-    for(int i = 0; i < program.size(); i++)
-    {
+    for(int i = 0; i < program.size(); i++) {
         auto ins = program.at(i);
         std::cout << "[" << i << "]: " << std::to_string(ins) << '\n';
     }
 }
 
-void PrintTokenStream(TokenStream stream)
-{
-	for (auto&& t : stream)
-	{
+void PrintTokenStream(TokenStream stream) {
+	for (auto&& t : stream) {
         std::cout << std::to_string(t);
 	}
 }
 
-
-std::string LoadEntireFileIntoString(std::string path)
-{
+std::string LoadEntireFileIntoString(std::string path) {
 	std::filesystem::path fspath = path;
 	if (!std::filesystem::exists(fspath))
 	{
@@ -2617,12 +2646,10 @@ std::string LoadEntireFileIntoString(std::string path)
 	return buffer.str();
 }
 
-int main()
-{
+int main() {
 	auto source = LoadEntireFileIntoString("test.code");
 
-	if (!source.empty())
-	{
+	if (!source.empty()) {
 		Lexer lexer(source);
 		if (error) return 1;
 
@@ -2652,9 +2679,11 @@ int main()
         //                   ^ this should be casted to a float
 
         // TODO: Add more error checking.
+        // TODO: Implement +=, -= operator's etc.
+        // TODO: Implement intrinsic function's like println
+        // TODO: Implement out of order function calling.
 	}
-	else
-	{
+	else {
 		LogError("Source is empty");
 	}
 
