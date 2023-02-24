@@ -43,3 +43,12 @@ loop {
     
     i = i * 2;
 }
+
+/*
+// This doesnt work
+hey_there := 52;
+func hello() {
+    hey_there = hey_there * 2;
+}
+hello();
+*/

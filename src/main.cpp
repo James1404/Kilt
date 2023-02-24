@@ -34,6 +34,15 @@
 <function-call> ::= <identifier> '(' <argument-list> ')'
 */
 
+using u8 = std::uint8_t;
+using i8 = std::int8_t;
+using u16 = std::uint16_t;
+using i16 = std::int16_t;
+using u32 = std::uint32_t;
+using i32 = std::int32_t;
+using u64 = std::uint64_t;
+using i64 = std::int64_t;
+
 bool error = false;
 void LogError(std::string msg)
 {
@@ -133,16 +142,56 @@ std::map<std::string, TokenType> keywords = {
     { "false", TOKEN_LITERAL },
 };
 
+class Value;
+
+class ArrayValue {
+private:
+    // NOTE: If array value is 0 then it is dynamic.
+    // NOTE: size > 0 then its fixed sized.
+    int size = 0;
+    std::vector<Value*> data;
+
+    Token type;
+public:
+    ArrayValue() = default;
+    ArrayValue(const ArrayValue& other) = default;
+
+    Value* at(u64 idx) {
+        return NULL;
+
+    }
+
+    void push() {
+
+    }
+
+    void remove(u64 idx) {
+
+    }
+
+    void pop(u64 count) {
+
+    }
+};
+
+namespace std {
+    std::string to_string(ArrayValue other) {
+        return "";
+    }
+}
+
 enum ValueType
 {
     VALUE_NONE,
 
+    VALUE_ARRAY,
     VALUE_INT, VALUE_REAL, VALUE_STR, VALUE_BOOL,
     VALUE_ID
 };
 
 ValueType StringToValueType(std::string type)
 {
+    // NOTE: Cant convert string to array.
     if(type == "str") return VALUE_STR;
     if(type == "int") return VALUE_INT;
     if(type == "float") return VALUE_REAL;
@@ -155,6 +204,7 @@ namespace std {
     std::string to_string(ValueType other) {
         switch (other)
         {
+            case VALUE_ARRAY: { return "array"; } break;
             case VALUE_INT: { return "int"; } break;
             case VALUE_REAL: { return "float"; } break;
             case VALUE_STR: { return "str"; } break;
@@ -177,9 +227,13 @@ private:
 
         switch(type)
         {
+            case VALUE_ARRAY:
+            {
+                delete static_cast<ArrayValue*>(data);
+            } break;
             case VALUE_INT:
             {
-                delete static_cast<int64_t*>(data);
+                delete static_cast<i64*>(data);
             } break;
             case VALUE_REAL:
             {
@@ -226,7 +280,7 @@ private:
         }
 
         type = VALUE_INT;
-        data = new int64_t(std::stoll(text));
+        data = new i64(std::stoll(text));
     }
 
     void ParseReal(std::string text)
@@ -283,6 +337,7 @@ private:
         type = VALUE_ID;
     }
 public:
+    bool IsArray() const { return type == VALUE_ARRAY; }
     bool IsInt() const { return type == VALUE_INT; }
     bool IsReal() const { return type == VALUE_REAL; }
     bool IsStr() const { return type == VALUE_STR; }
@@ -291,7 +346,8 @@ public:
 
     ValueType& GetType() { return type; }
 
-    int64_t* GetInt() const { return static_cast<int64_t*>(data); }
+    ArrayValue* GetArray() const { return static_cast<ArrayValue*>(data); }
+    i64* GetInt() const { return static_cast<i64*>(data); }
     double* GetReal() const { return static_cast<double*>(data); }
     std::string* GetStr() const { return static_cast<std::string*>(data); }
     bool* GetBool() const { return static_cast<bool*>(data); }
@@ -326,9 +382,13 @@ public:
 
         switch(type)
         {
+            case VALUE_ARRAY:
+            {
+                data = new ArrayValue(*other.GetArray());
+            } break;
             case VALUE_INT:
             {
-                data = new int64_t(*other.GetInt());
+                data = new i64(*other.GetInt());
             } break;
             case VALUE_REAL:
             {
@@ -366,10 +426,10 @@ public:
         }
     }
 
-	Value(int64_t other)
+	Value(i64 other)
 	{
 		type = VALUE_INT;
-		data = new int64_t(other);
+		data = new i64(other);
 	}
 
 	Value(double other)
@@ -395,9 +455,13 @@ public:
     {
         switch(type)
         {
+            case VALUE_ARRAY:
+            {
+                data = new ArrayValue();
+            } break;
             case VALUE_INT:
             {
-                data = new int64_t(0);
+                data = new i64(0);
             } break;
             case VALUE_REAL:
             {
@@ -461,9 +525,13 @@ public:
 
         switch(type)
         {
+            case VALUE_ARRAY:
+            {
+                data = new ArrayValue(*other.GetArray());
+            } break;
             case VALUE_INT:
             {
-                data = new int64_t(*other.GetInt());
+                data = new i64(*other.GetInt());
             } break;
             case VALUE_REAL:
             {
@@ -506,11 +574,11 @@ public:
         return *this;
     }
 
-	Value& operator=(int64_t other)
+	Value& operator=(i64 other)
 	{
         FreeData();
 		type = VALUE_INT;
-		data = new int64_t(other);
+		data = new i64(other);
         return *this;
 	}
 
@@ -553,9 +621,13 @@ public:
         type = type_;
         switch(type)
         {
+            case VALUE_ARRAY:
+            {
+                data = new ArrayValue();
+            } break;
             case VALUE_INT:
             {
-                data = new int64_t(0);
+                data = new i64(0);
             } break;
             case VALUE_REAL:
             {
@@ -598,6 +670,7 @@ namespace std {
     std::string to_string(Value other) {
         switch (other.GetType())
         {
+            case VALUE_ARRAY: { return std::to_string(*other.GetArray()) + ": " + std::to_string(other.GetType()); } break;
             case VALUE_INT: { return std::to_string(*other.GetInt()) + ": " + std::to_string(other.GetType()); } break;
             case VALUE_REAL: { return std::to_string(*other.GetReal()) + ": " + std::to_string(other.GetType()); } break;
             case VALUE_STR: { return *other.GetStr() + ": " + std::to_string(other.GetType()); } break;
@@ -607,7 +680,6 @@ namespace std {
         return "";
     }
 }
-
 
 bool CompareValueTypes(Value l, Value r)
 {
@@ -923,6 +995,9 @@ struct ValueNode : Node
 {
     Token token;
     bool negative = false;
+    // array_idx == -1 : not an array
+    // array_idx > -1 : array index
+    Value array_idx = (i64)-1;
 
 	ValueNode(Token token_, bool negative_ = false)
         : token(token_), negative(negative_)
@@ -930,6 +1005,10 @@ struct ValueNode : Node
 
 	ValueNode(Token token_, ValueType type_, bool negative_ = false)
         : token(token_), type(type_), negative(negative_)
+    {}
+    
+	ValueNode(Token token_, Value idx)
+        : token(token_), type(VALUE_ID), array_idx(idx)
     {}
 private:
     ValueType type = VALUE_NONE;
@@ -951,8 +1030,10 @@ struct VariableDeclNode : Node
     Node* value;
     bool infer;
 
-	VariableDeclNode(Token id_, Token type_, Node* value_ = NULL)
-		: id(id_), type(type_), value(value_), infer(false)
+    bool is_array = false;
+
+	VariableDeclNode(Token id_, Token type_, Node* value_ = NULL, bool is_array_ = false)
+		: id(id_), type(type_), value(value_), infer(false), is_array(is_array_)
 	{}
 
 	VariableDeclNode(Token id_, Node* value_ = NULL)
@@ -1033,10 +1114,11 @@ struct LoopNode : Node
 
 struct ReturnNode : Node
 {
+    Token id;
     Node* expr;
 
-    ReturnNode(Node* expr_)
-        : expr(expr_)
+    ReturnNode(Token id_, Node* expr_)
+        : id(id_), expr(expr_)
     {}
 
     VISIT_
@@ -1169,6 +1251,7 @@ struct Parser
 
 	Node* Statement()
 	{
+        Token t = current;
         if (AdvanceIfMatch(TOKEN_IF))
 		{
 			Node* cond = Expression();
@@ -1253,7 +1336,7 @@ struct Parser
             Node* expr = Expression();
             if(AdvanceIfMatch(TOKEN_SEMICOLON))
             {
-                return new ReturnNode(expr);
+                return new ReturnNode(t, expr);
             }
             else
             {
@@ -1352,6 +1435,39 @@ struct Parser
                         return new VariableDeclNode(id, type);
                     }
                 }
+                else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
+                {
+                    Token type = current;
+                    if(AdvanceIfMatch(TOKEN_IDENTIFIER))
+                    {
+                        if(AdvanceIfMatch(TOKEN_COMMA))
+                        {
+                            if(Node* size = Expression(); size != NULL)
+                            {
+                                if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+                                {
+                                    return new VariableDeclNode(id, type, size, true);
+                                }
+                                else
+                                {
+                                    LogError("Array decleration must have a closing bracket", id.line, id.location);
+                                }
+                            }
+                            else
+                            {
+                                LogError("Array size must be a valid expression", id.line, id.location);
+                            }
+                        }
+                        else
+                        {
+                            LogError("Array decleration requires a comma after the type identifier", id.line, id.location);
+                        }
+                    }
+                    else
+                    {
+                        LogError("Array decleration requires a type identifier", id.line, id.location);
+                    }
+                }
                 else if(AdvanceIfMatch(TOKEN_EQUAL))
                 {
                     if(Node* value = Expression(); value != NULL)
@@ -1377,11 +1493,22 @@ struct Parser
     {
         if(Token id = current; id.type == TOKEN_IDENTIFIER)
         {
+            // TODO: Implement array indexing e.g. names[5] = "James";
             if(Peek().type == TOKEN_EQUAL)
             {
                 Advance(2);
                 return new AssignmentNode(id, Expression());
             }
+        }
+
+        return NULL;
+    }
+
+    Node* Identifier() {
+        Token id = current;
+        if(AdvanceIfMatch(TOKEN_IDENTIFIER))
+        {
+
         }
 
         return NULL;
@@ -1526,10 +1653,18 @@ struct Parser
             Node* func_call = FunctionCall();
             if(func_call != NULL) return func_call;
 
+            if(AdvanceIfMatch(TOKEN_LEFT_BRACKET)) {
+                Token idx = current;
+                if(idx.type == TOKEN_LITERAL) {
+                    if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET)) {
+                        return new ValueNode(t, idx);
+                    }
+                }
+            }
+
             Advance();
             return new ValueNode(t, VALUE_ID);
         }
-        // TODO: Add array literal
 
         return NULL;
 	}
@@ -1541,8 +1676,8 @@ struct FunctionData {
 
     FunctionData() = default;
 
-    FunctionData(std::string returntype_, std::vector<ValueType> args_)
-        : returntype(StringToValueType(returntype_)), args(args_)
+    FunctionData(ValueType returntype_, std::vector<ValueType> args_)
+        : returntype(returntype_), args(args_)
     {}
 };
 
@@ -1604,7 +1739,12 @@ private:
     Stack<Value> stack;
 
     ValueType assignmentType = VALUE_NONE;
+
     bool is_arg = false;
+
+    ValueType returntype = VALUE_NONE;
+    bool in_loop = false;
+    bool in_func = false;
 public:
     TypeChecker() {
         current = &global;
@@ -1660,9 +1800,22 @@ public:
         Value r = stack.top(); stack.pop();
         Value l = stack.top(); stack.pop();
 
-        // TODO: Test if these arent neccessary.
-        //if(l.IsId()) l.GetType() = current->FindType(*l.GetId());
-        //if(r.IsId()) r.GetType() = current->FindType(*r.GetId());
+        if(l.GetType() == VALUE_ARRAY)
+        {
+            switch(node->op.type)
+            {
+                case TOKEN_DIVIDE:
+                case TOKEN_MULTIPLY:
+                case TOKEN_NOT:
+                case TOKEN_LESS:
+                case TOKEN_GREATER:
+                case TOKEN_LESS_EQUAL:
+                case TOKEN_GREATER_EQUAL:
+                {
+                    LogError("Invalid operator operation on an array", l.GetLine(), l.GetLoc());
+                } break;
+            }
+        }
 
         if(!CompareValueTypes(l, r))
         {
@@ -1718,12 +1871,24 @@ public:
 
             if(node->value != NULL)
             {
-                node->value->visit(this);
-                Value valuetype = stack.top(); stack.pop();
-                if(!CompareValueTypes(vartype, valuetype))
-                {
-                    LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
-                    return;
+                if(node->is_array) {
+                    node->value->visit(this);
+                    Value arraysizetype = stack.top(); stack.pop();
+                    if(!arraysizetype.IsInt()) {
+                        LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
+                        return;
+                    }
+
+                    vartype = VALUE_ARRAY;
+                }
+                else {
+                    node->value->visit(this);
+                    Value valuetype = stack.top(); stack.pop();
+                    if(!CompareValueTypes(vartype, valuetype))
+                    {
+                        LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
+                        return;
+                    }
                 }
             }
         }
@@ -1759,9 +1924,13 @@ public:
         }
         is_arg = false;
 
-        current->parent->SetFunction(node->id.text, FunctionData(node->returntype.text, args));
+        returntype = StringToValueType(node->returntype.text);
 
+        current->parent->SetFunction(node->id.text, FunctionData(returntype, args));
+
+        in_func = true;
         node->block->visit(this);
+        in_func = false;
 
         DeleteCurrent();
 	}
@@ -1817,30 +1986,53 @@ public:
 		if (node->init != NULL) node->init->visit(this);
 		if (node->cond != NULL) node->cond->visit(this);
 		if (node->incr != NULL) node->incr->visit(this);
+
+        in_loop = true;
 		node->block->visit(this);
+        in_loop = false;
         DeleteCurrent();
 	}
 
 	void visit(LoopNode* node)
 	{
+        in_loop = true;
 		node->block->visit(this);
+        in_loop = false;
 	}
 
 	void visit(ReturnNode* node)
     {
-        // TODO: Make sure returned value has same type as returntype.
-        node->expr->visit(this);
+        if(!in_func)
+        {
+            LogError("Return statement must be in a function", node->id.line, node->id.location);
+        }
 
-        // TODO: Make sure return is in function
+        ValueType rtype = VALUE_NONE;
+        if(node->expr != NULL) {
+             node->expr->visit(this);
+             rtype = stack.top().GetType(); stack.pop();
+        }
+
+        if(returntype != rtype)
+        {
+            LogError("Returned type '" + std::to_string(rtype) + "' is different as expected '" + std::to_string(returntype) + "'", node->id.line, node->id.location);
+        }
     }
 
-    // TODO: Make break and continue is in a loop
 	void visit(BreakNode* node)
     {
+        if(!in_loop)
+        {
+            LogError("Break statement must be in a loop", node->id.line, node->id.location);
+        }
     }
 
 	void visit(ContinueNode* node)
     {
+        if(!in_loop)
+        {
+            LogError("Continue statement must be in a loop", node->id.line, node->id.location);
+        }
     }
 };
 
@@ -1965,7 +2157,7 @@ enum InstructionType : std::uint8_t
 
     INSTRUCTION_COMP_AND, INSTRUCTION_COMP_OR,
 
-    //INSTRUCTION_START_LOOP, INSTRUCTION_JUMP_LOOP, INSTRUCTION_BREAK_LOOP,
+    INSTRUCTION_STORE_ARRAY, INSTRUCTION_STORE_ARRAY_INDEX, INSTRUCTION_LOAD_ARRAY_INDEX,
 };
 
 struct Instruction
@@ -2014,16 +2206,12 @@ namespace std {
             case INSTRUCTION_COMP_GREATER_EQUAL: { return "COMP_GREATER_EQUAL"; } break;
             case INSTRUCTION_COMP_EQUAL: { return "COMP_EQUAL"; } break;
             case INSTRUCTION_COMP_NOT_EQUAL: { return "COMP_NOT_EQUAL"; } break;
-
-                                             /*
-            case INSTRUCTION_START_LOOP: { return "START_LOOP"; } break;
-            case INSTRUCTION_JUMP_LOOP: { return "JUMP_LOOP"; } break;
-            case INSTRUCTION_BREAK_LOOP: { return "BREAK_LOOP"; } break;
-            */
-
             case INSTRUCTION_COMP_AND: { return "COMP_AND"; } break;
             case INSTRUCTION_COMP_OR: { return "COMP_OR"; } break;
 
+            case INSTRUCTION_STORE_ARRAY: { return "STORE_ARRAY " + std::to_string(other.value); } break;
+            case INSTRUCTION_STORE_ARRAY_INDEX: { return "STORE_ARRAY_INDEX " + std::to_string(other.value); } break;
+            case INSTRUCTION_LOAD_ARRAY_INDEX: { return "LOAD_ARRAY_INDEX " + std::to_string(other.value); } break;
         }
 
         return "INVALID INSTRUCTION";
@@ -2036,7 +2224,7 @@ struct Environment
 
     void CreateIdentifier(std::string name)
     {
-		identifiers[name] = (int64_t)0;
+		identifiers[name] = (i64)0;
     }
 
 	void SetIdentifier(std::string name, Value value)
@@ -2082,6 +2270,42 @@ struct Environment
         stack.push(result);\
     }
 
+class MemoryArena {
+private:
+   void* mem = NULL;
+   size_t used = 0, allocated = 0;
+
+   static constexpr size_t defaultSize = sizeof(u8) * 10000;
+
+   void Extend() {
+       allocated *= 2;
+   }
+public:
+   MemoryArena() {
+       mem = malloc(defaultSize);
+       allocated = defaultSize;
+   }
+
+   ~MemoryArena() {
+       free(mem);
+   }
+
+   template<typename T>
+   T* Request(u64 size) {
+       used += size;
+
+       if(used > allocated) {
+           Extend();
+       }
+
+       return (T*)(mem + used); 
+   }
+
+   void Free(u64 loc, u64 size) {
+
+   }
+};
+
 class Program {
 private:
     std::vector<Instruction> stream;
@@ -2103,17 +2327,16 @@ public:
     }
 };
 
-using PLoc = std::uint64_t;
+using PLoc = u64;
 class VirtualMachine
 {
 private:
-
 	Stack<Value> stack;
     Stack<PLoc> callStack;
     std::map<std::string,PLoc> jumpTable;
 
 	Environment env;
-
+    //MemoryArena memory;
 public:
     void PrintFinalSymbolTable()
     {
@@ -2410,20 +2633,35 @@ public:
                     stack.push(result);
                 } break;
 
-                /*
-                case INSTRUCTION_START_LOOP:
+                case INSTRUCTION_STORE_ARRAY:
                 {
+                    Value size = stack.top(); stack.pop();
 
+                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
+
+                    Value arr;
+
+                    auto id = env.FindIdentifier(name);
+                    if(id) {
+                        env.SetIdentifier(name, arr);
+                    }
+                    else {
+                        env.CreateIdentifier(name);
+                        env.SetIdentifier(name, arr);
+                    }
                 } break;
-                case INSTRUCTION_JUMP_LOOP:
+                case INSTRUCTION_STORE_ARRAY_INDEX:
                 {
+                    Value idx = stack.top(); stack.pop();
 
+                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
                 } break;
-                case INSTRUCTION_BREAK_LOOP:
+                case INSTRUCTION_LOAD_ARRAY_INDEX:
                 {
+                    Value idx = stack.top(); stack.pop();
 
+                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
                 } break;
-                */
 
                 default:
                 {
@@ -2498,17 +2736,25 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(VariableDeclNode* node)
 	{
-        if(node->value != NULL)
+        if(node->is_array)
         {
             node->value->visit(this);
+            program.emplace(INSTRUCTION_STORE_ARRAY, Value(node->id.text));
         }
         else
         {
-            program.emplace(INSTRUCTION_PUSH, Value((int64_t)0));
-        }
+            if(node->value != NULL)
+            {
+                node->value->visit(this);
+            }
+            else
+            {
+                program.emplace(INSTRUCTION_PUSH, Value((i64)0));
+            }
 
-        program.emplace(INSTRUCTION_STORE, Value(node->id.text));
-        previous_id = node->id.text;
+            program.emplace(INSTRUCTION_STORE, Value(node->id.text));
+            previous_id = node->id.text;
+        }
 	}
 
 	void visit(AssignmentNode* node)
@@ -2522,8 +2768,8 @@ struct BytecodeEmitter : NodeVisitor
 	{
         program.emplace(INSTRUCTION_START_SUBROUTINE, Value(node->id.text));
 
-        int64_t start = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+        i64 start = program.size();
+        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
 
         for(int i = node->args.size() - 1; i >= 0; i--)
         {
@@ -2534,7 +2780,7 @@ struct BytecodeEmitter : NodeVisitor
         node->block->visit(this);
         program.emplace(INSTRUCTION_RETURN_FROM_SUBROUTINE);
 
-        program.at(start).value = (int64_t)program.size();
+        program.at(start).value = (i64)program.size();
 	}
 
 	void visit(CallNode* node)
@@ -2544,8 +2790,6 @@ struct BytecodeEmitter : NodeVisitor
             arg->visit(this);
         }
         program.emplace(INSTRUCTION_JUMP_SUBROUTINE, Value(node->id.text));
-
-        // TODO: Fix scope end problem's
 	}
 
 	void visit(IfNode* node)
@@ -2553,23 +2797,22 @@ struct BytecodeEmitter : NodeVisitor
         node->cond->visit(this);
         if(node->elseblock == NULL)
         {
-            int64_t start = program.size();
-            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
+            i64 start = program.size();
+            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((i64)0));
             node->block->visit(this);
-            program.at(start).value = (int64_t)program.size();
+            program.at(start).value = (i64)program.size();
         }
         else
         {
-            int64_t start = program.size();
-            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((int64_t)0));
+            i64 start = program.size();
+            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((i64)0));
             node->block->visit(this);
-            int64_t end = program.size();
-            program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
-            program.at(start).value = (int64_t)program.size();
+            i64 end = program.size();
+            program.emplace(INSTRUCTION_JUMP, Value((i64)0));
+            program.at(start).value = (i64)program.size();
             node->elseblock->visit(this);
-            program.at(end).value = (int64_t)program.size();
+            program.at(end).value = (i64)program.size();
         }
-        // TODO: Implement else block
 	}
 
     PLoc loopstart, breakloc;
@@ -2578,26 +2821,24 @@ struct BytecodeEmitter : NodeVisitor
 		if (node->init != NULL) node->init->visit(this);
         loopstart = program.size();
 		if (node->cond != NULL) node->cond->visit(this);
-        program.emplace(INSTRUCTION_JUMP_IF_TRUE, Value((int64_t)program.size() + 2));
+        program.emplace(INSTRUCTION_JUMP_IF_TRUE, Value((i64)program.size() + 2));
         breakloc = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
 		if (node->incr != NULL) node->incr->visit(this);
 		node->block->visit(this);
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
-        program.at(breakloc).value = (int64_t)program.size();
+        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
+        program.at(breakloc).value = (i64)program.size();
 	}
 
 	void visit(LoopNode* node)
 	{
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)program.size() + 2));
+        program.emplace(INSTRUCTION_JUMP, Value((i64)program.size() + 2));
         breakloc = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)0));
+        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
         loopstart = program.size();
-        // TODO: Implement this.
-
         node->block->visit(this);
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
-        program.at(breakloc).value = (int64_t)program.size();
+        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
+        program.at(breakloc).value = (i64)program.size();
 	}
 
 	void visit(ReturnNode* node)
@@ -2608,12 +2849,12 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(BreakNode* node)
     {
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)breakloc ));
+        program.emplace(INSTRUCTION_JUMP, Value((i64)breakloc ));
     }
 
 	void visit(ContinueNode* node)
     {
-        program.emplace(INSTRUCTION_JUMP, Value((int64_t)loopstart));
+        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
     }
 };
 
@@ -2677,11 +2918,19 @@ int main() {
         // TODO: Automatic cast int to float if assigning to float e.g.
         // number : float = 25;
         //                   ^ this should be casted to a float
+        // NOTE: Actually this might not have to be.
+        // TODO: Think about explicit casting for e.g. (cast float)25
 
-        // TODO: Add more error checking.
+        // TODO: Make type's an explicit value;
+        // TODO: Quasiquotation
+
         // TODO: Implement +=, -= operator's etc.
         // TODO: Implement intrinsic function's like println
         // TODO: Implement out of order function calling.
+        // TODO: Implement default arg value.
+        // TODO: Implement any type.
+        // TODO: Implement variadic args.
+        // TODO: Implement ptr's
 	}
 	else {
 		LogError("Source is empty");
