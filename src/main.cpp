@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <optional>
 #include <variant>
+#include <iomanip>
+#include <algorithm>
+#include <sstream>
 
 /* --- Language Grammar ---
 <statement> ::= "if" <expression> <statement-block> ("else" <statement-block>)?
@@ -69,7 +72,7 @@ public:
 	void pop() { data.pop_back(); }
 	T& top() { return data.back(); }
 
-	T& at(size_t depth) { return data.at(size() - depth); }
+	T& at(size_t depth) { return data.at(size() - depth - 1); }
 };
 
 bool IsLetter(char c)
@@ -142,6 +145,13 @@ std::map<std::string, TokenType> keywords = {
     { "false", TOKEN_LITERAL },
 };
 
+enum IntegerSizes : u8 {
+    INTEGER_8BIT = 0x00,
+    INTEGER_16BIT = 0x01,
+    INTEGER_32BIT = 0x02,
+    INTEGER_64BIT = 0x03,
+};
+
 class Value;
 
 class ArrayValue {
@@ -180,7 +190,7 @@ namespace std {
     }
 }
 
-enum ValueType
+enum ValueType : u8
 {
     VALUE_NONE,
 
@@ -691,6 +701,115 @@ TokenType GetKeyword(std::string text)
 	auto it = keywords.find(text);
 	if (it != keywords.end()) return it->second;
 	return TOKEN_IDENTIFIER;
+}
+
+class Program;
+Program ToProgram(i64 value);
+Program ToProgram(double value);
+Program ToProgram(bool value);
+Program ToProgram(std::string value);
+Program ToProgram(Value v);
+
+class Program {
+private:
+    std::vector<u8> stream;
+public:
+    auto begin() {
+        return stream.begin();
+    }
+
+    auto end() {
+        return stream.end();
+    }
+
+    void push(u8 byte) {
+        stream.push_back(byte);
+    }
+
+    void push(Program other) {
+        stream.insert(end(), other.begin(), other.end());
+    }
+
+    void push(Value val) {
+        Program p = ToProgram(val);
+        stream.insert(end(), p.begin(), p.end());
+    }
+
+    u8& at(size_t idx) {
+        return stream.at(idx);
+    }
+
+    size_t size() const {
+        return stream.size();
+    }
+
+    void replace(u64 idx, Program other) {
+        std::copy(other.begin(), other.end(), begin() + idx);
+    }
+
+    void replace(u64 idx, Value val) {
+        Program other = ToProgram(val);
+        replace(idx, other);
+    }
+};
+
+Program ToProgram(Value v) {
+    Program result;
+
+    result.push(v.GetType());
+
+    switch(v.GetType()) {
+        //case VALUE_ARRAY: { return; } break;
+        case VALUE_INT: { result.push(ToProgram(*v.GetInt())); } break;
+        case VALUE_REAL: { result.push(ToProgram(*v.GetReal())); } break;
+        case VALUE_STR: { result.push(ToProgram(*v.GetStr())); } break;
+        case VALUE_BOOL: { result.push(ToProgram(*v.GetBool())); } break;
+        case VALUE_ID: { result.push(ToProgram(*v.GetStr())); } break;
+    }
+
+    return result;
+}
+
+Program ToProgram(i64 value) {
+    u8 type = INTEGER_64BIT; 
+    u8 sign = 1;
+
+    u8 properties = (sign << 2) | type;
+    
+    Program result;
+    result.push(properties);
+
+    result.push((u8)((value >>  0) & 0xff));
+    result.push((u8)((value >>  8) & 0xff));
+    result.push((u8)((value >> 16) & 0xff));
+    result.push((u8)((value >> 24) & 0xff));
+    result.push((u8)((value >> 32) & 0xff));
+    result.push((u8)((value >> 40) & 0xff));
+    result.push((u8)((value >> 48) & 0xff));
+    result.push((u8)((value >> 56) & 0xff));
+
+    return result;
+}
+
+Program ToProgram(double value) {
+    Program result;
+    // TODO: Implementation
+    return result;
+}
+
+Program ToProgram(bool value) {
+    Program result;
+    result.push(value);
+    return result;
+}
+
+Program ToProgram(std::string value) {
+    Program result = ToProgram(Value((i64)value.size()));
+    for(char c : value) {
+        result.push(c);
+    }
+
+    return result;
 }
 
 using TokenStream = std::vector<Token>;
@@ -2139,129 +2258,134 @@ struct NodeFreeVisitor : NodeVisitor
 	void visit(ContinueNode* node) {}
 };
 
-enum InstructionType : std::uint8_t
+enum OpCodeType : u8
 {
-	INSTRUCTION_NONE,
+	OPCODE_NONE = 0x00,
 
-	INSTRUCTION_PUSH, INSTRUCTION_POP,
-	INSTRUCTION_STORE, INSTRUCTION_LOAD,
+	OPCODE_PUSH, OPCODE_POP,
+	OPCODE_STORE, OPCODE_LOAD,
 
-	INSTRUCTION_JUMP, INSTRUCTION_JUMP_IF_TRUE, INSTRUCTION_JUMP_IF_FALSE,
-    INSTRUCTION_START_SUBROUTINE, INSTRUCTION_JUMP_SUBROUTINE, INSTRUCTION_RETURN_FROM_SUBROUTINE,
+	OPCODE_JUMP, OPCODE_JUMP_IF_TRUE, OPCODE_JUMP_IF_FALSE,
+    OPCODE_START_SUBROUTINE, OPCODE_JUMP_SUBROUTINE, OPCODE_RETURN_FROM_SUBROUTINE,
 
-	INSTRUCTION_ADD, INSTRUCTION_MINUS, INSTRUCTION_MULTIPLY, INSTRUCTION_DIVIDE,
+	OPCODE_ADD, OPCODE_MINUS, OPCODE_MULTIPLY, OPCODE_DIVIDE,
 
-    INSTRUCTION_COMP_LESS, INSTRUCTION_COMP_GREATER,
-    INSTRUCTION_COMP_LESS_EQUAL, INSTRUCTION_COMP_GREATER_EQUAL,
-    INSTRUCTION_COMP_EQUAL, INSTRUCTION_COMP_NOT_EQUAL,
+    OPCODE_COMP_LESS, OPCODE_COMP_GREATER,
+    OPCODE_COMP_LESS_EQUAL, OPCODE_COMP_GREATER_EQUAL,
+    OPCODE_COMP_EQUAL, OPCODE_COMP_NOT_EQUAL,
 
-    INSTRUCTION_COMP_AND, INSTRUCTION_COMP_OR,
+    OPCODE_COMP_AND, OPCODE_COMP_OR,
 
-    INSTRUCTION_STORE_ARRAY, INSTRUCTION_STORE_ARRAY_INDEX, INSTRUCTION_LOAD_ARRAY_INDEX,
+    OPCODE_STORE_ARRAY, OPCODE_STORE_ARRAY_INDEX, OPCODE_LOAD_ARRAY_INDEX,
+
+    OPCODE_MAX = 0xff
 };
 
-struct Instruction
-{
-	InstructionType type;
-	Value value;
-
-    Instruction(InstructionType type_)
-        : type(type_)
-    {}
-
-    Instruction(InstructionType type_, Value value_)
-        : type(type_), value(value_)
-    {}
+std::map<OpCodeType,u64> OpCodeArgTable = {
+    { OPCODE_PUSH, 1 },
+    { OPCODE_POP, 0 },
+    { OPCODE_STORE, 1 },
+    { OPCODE_LOAD, 1 },
+    { OPCODE_JUMP, 1 },
+    { OPCODE_JUMP_IF_TRUE, 1 },
+    { OPCODE_JUMP_IF_FALSE, 1 },
+    { OPCODE_START_SUBROUTINE, 2 },
+    { OPCODE_JUMP_SUBROUTINE, 1 },
+    { OPCODE_RETURN_FROM_SUBROUTINE, 0 },
+    { OPCODE_ADD, 0 },
+    { OPCODE_MINUS, 0 },
+    { OPCODE_MULTIPLY, 0 },
+    { OPCODE_DIVIDE, 0 },
+    { OPCODE_COMP_LESS, 0 },
+    { OPCODE_COMP_GREATER, 0 },
+    { OPCODE_COMP_LESS_EQUAL, 0 },
+    { OPCODE_COMP_GREATER_EQUAL, 0 },
+    { OPCODE_COMP_EQUAL, 0 },
+    { OPCODE_COMP_NOT_EQUAL, 0 },
+    { OPCODE_COMP_AND, 0 },
+    { OPCODE_COMP_OR, 0 },
+    { OPCODE_STORE_ARRAY, 1 },
+    { OPCODE_STORE_ARRAY_INDEX, 1 },
+    { OPCODE_LOAD_ARRAY_INDEX, 1 },
 };
 
-void PrintInstruction(Instruction ins)
-{
-    std::cout << '\n';
+u64 GetOpcodeArgC(OpCodeType op) {
+    auto it = OpCodeArgTable.find(op);
+    if(it != OpCodeArgTable.end()) return it->second;
+    return -1;
 }
 
-namespace std {
-    std::string to_string(Instruction other) {
-        switch(other.type)
-        {
-            case INSTRUCTION_PUSH: { return "PUSH " + std::to_string(other.value); } break;
-            case INSTRUCTION_POP: { return "POP"; } break;
-            case INSTRUCTION_STORE: { return "STORE " + std::to_string(other.value); } break;
-            case INSTRUCTION_LOAD: { return "LOAD " + std::to_string(other.value); } break;
-            case INSTRUCTION_JUMP: { return "JUMP " + std::to_string(other.value); } break;
-            case INSTRUCTION_JUMP_IF_TRUE: { return "JUMP_IF_TRUE " + std::to_string(other.value); } break;
-            case INSTRUCTION_JUMP_IF_FALSE: { return "JUMP_IF_FALSE " + std::to_string(other.value); } break;
-
-            case INSTRUCTION_START_SUBROUTINE: { return "START_SUBROUTINE " + std::to_string(other.value); } break;
-            case INSTRUCTION_JUMP_SUBROUTINE: { return "JUMP_SUBROUTINE " + std::to_string(other.value); } break;
-            case INSTRUCTION_RETURN_FROM_SUBROUTINE: { return "RETURN_FROM_SUBROUTINE " + std::to_string(other.value); } break;
-
-            case INSTRUCTION_ADD: { return "ADD"; } break;
-            case INSTRUCTION_MINUS: { return "MINUS"; } break;
-            case INSTRUCTION_MULTIPLY: { return "MULTIPLY"; } break;
-            case INSTRUCTION_DIVIDE: { return "DIVIDE"; } break;
-
-            case INSTRUCTION_COMP_LESS: { return "COMP_LESS"; } break;
-            case INSTRUCTION_COMP_GREATER: { return "COMP_GREATER"; } break;
-            case INSTRUCTION_COMP_LESS_EQUAL: { return "COMP_LESS_EQUAL"; } break;
-            case INSTRUCTION_COMP_GREATER_EQUAL: { return "COMP_GREATER_EQUAL"; } break;
-            case INSTRUCTION_COMP_EQUAL: { return "COMP_EQUAL"; } break;
-            case INSTRUCTION_COMP_NOT_EQUAL: { return "COMP_NOT_EQUAL"; } break;
-            case INSTRUCTION_COMP_AND: { return "COMP_AND"; } break;
-            case INSTRUCTION_COMP_OR: { return "COMP_OR"; } break;
-
-            case INSTRUCTION_STORE_ARRAY: { return "STORE_ARRAY " + std::to_string(other.value); } break;
-            case INSTRUCTION_STORE_ARRAY_INDEX: { return "STORE_ARRAY_INDEX " + std::to_string(other.value); } break;
-            case INSTRUCTION_LOAD_ARRAY_INDEX: { return "LOAD_ARRAY_INDEX " + std::to_string(other.value); } break;
-        }
-
-        return "INVALID INSTRUCTION";
-    }
-}
+// Instruction set
+//
+// PUSH constant
+// POP
+// STORE id
+// LOAD id
+//
+// OPCODE_START_SUBROUTINE id skip
 
 struct Environment
 {
-	std::map<std::string, Value> identifiers;
+    struct Variable {
+        std::string name;
+        Value value;
+        u64 depth;
 
-    void CreateIdentifier(std::string name)
-    {
-		identifiers[name] = (i64)0;
+        Variable(std::string name_, Value value_, u64 depth_)
+            : name(name_), value(value_), depth(depth_)
+        {}
+    };
+
+    Stack<Variable> varstack;
+    u64 depth = 0;
+
+    void IncrementDepth() {
+        depth++;
     }
 
-	void SetIdentifier(std::string name, Value value)
-	{
-		auto it = identifiers.find(name);
+    void DecrementDepth() {
+        depth--;
 
-		if (it != identifiers.end())
-		{
-			it->second = value;
-            return;
-		}
+        if(depth > 0) {
+            Variable current = varstack.top();
+            while(current.depth > depth)
+            {
+                varstack.pop();
+                current = varstack.top();
+            }
+        }
+    }
+
+    void CreateIdentifier(std::string name) {
+        varstack.push(Variable(name, (i64)0, depth));
+    }
+
+	void SetIdentifier(std::string name, Value value) {
+        for(int i = 0; i < varstack.size(); i++)
+        {
+            Variable& var = varstack.at(i);
+            if(var.depth > depth) continue;
+
+            if(var.name == name) {
+                var.value = value;
+                break;
+            }
+        }
 	}
 
-	std::optional<Value> FindIdentifier(std::string name)
-	{
-		auto it = identifiers.find(name);
+	std::optional<Value> FindIdentifier(std::string name) {
+        for(int i = 0; i < varstack.size(); i++)
+        {
+            Variable& var = varstack.at(i);
+            if(var.depth > depth) continue;
 
-		if (it != identifiers.end())
-		{
-			return it->second;
-		}
+            if(var.name == name) {
+                return var.value;
+            }
+        }
 
 		return {};
 	}
-
-    void Print()
-    {
-        std::cout << "IDENTIFIERS - VALUE\n";
-        for(auto&& [id,value] : identifiers)
-        {
-            char last = id.back();
-            if(last >= '1' && last <= '9') continue;
-
-            std::string n = id.substr(0, id.size()-1);
-            std::cout << n << " : " << std::to_string(value) << '\n';
-        }
-    }
 };
 
 #define VM_BINARY_OP(type, l, op, r)\
@@ -2306,42 +2430,45 @@ public:
    }
 };
 
-class Program {
-private:
-    std::vector<Instruction> stream;
-public:
-    void emplace(InstructionType type) {
-        stream.push_back(Instruction(type));
-    }
-
-    void emplace(InstructionType type, Value value) {
-        stream.push_back(Instruction(type, Value(value)));
-    }
-
-    Instruction& at(size_t idx) {
-        return stream.at(idx);
-    }
-
-    size_t size() const {
-        return stream.size();
-    }
-};
-
 using PLoc = u64;
 class VirtualMachine
 {
 private:
+    u64 pc = 0;
+
 	Stack<Value> stack;
     Stack<PLoc> callStack;
+
     std::map<std::string,PLoc> jumpTable;
 
 	Environment env;
     //MemoryArena memory;
+
+    Program program;
 public:
-    void PrintFinalSymbolTable()
+    VirtualMachine(Program p_)
+        : program(p_)
     {
+        PrintProgram();
+
+        for(pc = 0;pc < program.size();)
+        {
+            exec();
+        }
+    }
+
+    void PrintGlobalSymbolTable()
+    {
+        if(env.varstack.empty()) return;
+
         std::cout << "--- FINAL IDENTIFIER TABLE --- \n";
-        env.Print();
+        std::cout << "IDENTIFIERS - VALUE\n";
+        for(int i = 0; i < env.varstack.size(); i++)
+        {
+            Environment::Variable& var = env.varstack.at(i);
+            if(var.depth > 0) continue;
+            std::cout << var.name << " : " << std::to_string(var.value) << '\n';
+        }
         std::cout << "\n";
     }
 
@@ -2359,319 +2486,515 @@ public:
         std::cout << "\n";
     }
 
-	void Run(Program program)
+    u8 GetByte() { return program.at(pc++); }
+
+    Value decodeConstant() {
+        u8 type = GetByte();
+        switch(type) {
+            case VALUE_ARRAY:
+            {
+
+            } break;
+            case VALUE_INT:
+            {
+                u8 properties = GetByte();
+
+                u8 size = properties & 0b00000011;
+                u8 sign = (properties >> 2) & 0b00000001;
+
+                switch(size)
+                {
+                    case INTEGER_8BIT:
+                    {
+                    } break;
+                    case INTEGER_16BIT:
+                    {
+                    } break;
+                    case INTEGER_32BIT:
+                    {
+                    } break;
+                    case INTEGER_64BIT:
+                    {
+                        u8 bytes8[8] = {
+                            GetByte(),
+                            GetByte(),
+                            GetByte(),
+                            GetByte(),
+                            GetByte(),
+                            GetByte(),
+                            GetByte(),
+                            GetByte()
+                        };
+
+                        u16 bytes16[4] = {
+                            (u16)((bytes8[1] << 8) | bytes8[0]),
+                            (u16)((bytes8[3] << 8) | bytes8[2]),
+                            (u16)((bytes8[5] << 8) | bytes8[4]),
+                            (u16)((bytes8[7] << 8) | bytes8[6])
+                        };
+
+                        u32 bytes32[2] = {
+                            (u32)((bytes16[1] << 16) | bytes16[0]),
+                            (u32)((bytes16[3] << 16) | bytes16[2])
+                        };
+
+                        u64 finalValue = (((u64)bytes32[1] << 32) | bytes32[0]);
+
+                        return Value((i64)finalValue);
+                    } break;
+                }
+            } break;
+            case VALUE_REAL:
+            {
+                u8 bytes8[8] = {
+                    GetByte(),
+                    GetByte(),
+                    GetByte(),
+                    GetByte(),
+                    GetByte(),
+                    GetByte(),
+                    GetByte(),
+                    GetByte()
+                };
+
+                u16 bytes16[4] = {
+                    (u16)((bytes8[1] << 8) | bytes8[0]),
+                    (u16)((bytes8[3] << 8) | bytes8[2]),
+                    (u16)((bytes8[5] << 8) | bytes8[4]),
+                    (u16)((bytes8[7] << 8) | bytes8[6])
+                };
+
+                u32 bytes32[2] = {
+                    (u32)((bytes16[1] << 16) | bytes16[0]),
+                    (u32)((bytes16[3] << 16) | bytes16[2])
+                };
+
+                u64 finalValue = (((u64)bytes32[1] << 32) | bytes32[0]);
+
+                return Value(reinterpret_cast<double&>(finalValue));
+            } break;
+            case VALUE_STR:
+            {
+                Value size = decodeConstant();
+                std::string str;
+                for(int i = 0; i < *size.GetInt(); i++) {
+                    str.append(1, GetByte());
+                }
+
+                return Value(str);
+            } break;
+            case VALUE_BOOL:
+            {
+                return Value((bool)GetByte());
+            } break;
+            case VALUE_ID:
+            {
+                Value size = decodeConstant();
+                std::string id;
+                for(int i = 0; i < *size.GetInt(); i++) {
+                    id.append(1, GetByte());
+                }
+
+                return Value(id);
+            } break;
+
+            default:
+            {
+                LogError("Invalid constant type: " + std::to_string(type));
+            } break;
+        }
+
+        return{};
+    }
+
+	void exec()
 	{
-		for(PLoc pc = 0; pc < program.size();)
-		{
-			Instruction ins = program.at(pc);
+        u8 opcode = GetByte();
+        switch (opcode)
+        {
+            case OPCODE_PUSH:
+            {
+                stack.push(decodeConstant());
+            } break;
+            case OPCODE_POP:
+            {
+                stack.pop();
+            } break;
 
-			switch (ins.type)
-			{
-                case INSTRUCTION_PUSH:
-                {
-                    stack.push(ins.value);
-                } break;
-                case INSTRUCTION_POP:
-                {
-                    stack.pop();
-                } break;
+            case OPCODE_STORE:
+            {
+                Value v = stack.top();
+                stack.pop();
 
-                case INSTRUCTION_STORE:
-                {
-                    Value v = stack.top();
-                    stack.pop();
+                Value arg = decodeConstant();
+                std::string name = *arg.GetId();
 
-                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
+                auto id = env.FindIdentifier(name);
+                if(id) {
+                    env.SetIdentifier(name, v);
+                }
+                else {
+                    env.CreateIdentifier(name);
+                    env.SetIdentifier(name, v);
+                }
+            } break;
+            case OPCODE_LOAD:
+            {
+                Value arg = decodeConstant();
+                std::string name = *arg.GetId();
+                auto id = env.FindIdentifier(name);
+                if (id)
+                {
+                    stack.push(*id);
+                }
+            } break;
 
-                    auto id = env.FindIdentifier(name);
-                    if(id) {
-                        env.SetIdentifier(name, v);
-                    }
-                    else {
-                        env.CreateIdentifier(name);
-                        env.SetIdentifier(name, v);
-                    }
-                } break;
-                case INSTRUCTION_LOAD:
-                {
-                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
-                    auto id = env.FindIdentifier(name);
-                    if (id)
+            case OPCODE_JUMP:
+            {
+                Value arg = decodeConstant();
+                pc = *arg.GetInt();
+            } break;
+            case OPCODE_JUMP_IF_TRUE:
+            {
+                Value arg = decodeConstant();
+                Value v = stack.top(); stack.pop();
+                if(v.IsBool()) {
+                    if(*v.GetBool())
                     {
-                        stack.push(*id);
+                        pc = *arg.GetInt();
                     }
-                } break;
+                }
+            } break;
+            case OPCODE_JUMP_IF_FALSE:
+            {
+                Value arg = decodeConstant();
+                Value v = stack.top(); stack.pop();
+                if(v.IsBool()) {
+                    if(!*v.GetBool())
+                    {
+                        pc = *arg.GetInt();
+                    }
+                }
+            } break;
 
-                case INSTRUCTION_JUMP:
+            case OPCODE_START_SUBROUTINE:
+            {
+                Value id = decodeConstant();
+                Value skip = decodeConstant();
+                jumpTable.emplace(*id.GetId(), pc);
+                pc = *skip.GetInt();
+            } break;
+            case OPCODE_JUMP_SUBROUTINE:
+            {
+                Value arg = decodeConstant();
+                auto it = jumpTable.find(*arg.GetId());
+                if(it != jumpTable.end())
                 {
-                    pc = *ins.value.GetInt();
-                    continue;
-                } break;
-                case INSTRUCTION_JUMP_IF_TRUE:
-                {
-                    Value v = stack.top(); stack.pop();
-                    if(v.IsBool()) {
-                        if(*v.GetBool())
-                        {
-                            pc = *ins.value.GetInt();
-                            continue;
-                        }
-                    }
-                } break;
-                case INSTRUCTION_JUMP_IF_FALSE:
-                {
-                    Value v = stack.top(); stack.pop();
-                    if(v.IsBool()) {
-                        if(!*v.GetBool())
-                        {
-                            pc = *ins.value.GetInt();
-                            continue;
-                        }
-                    }
-                } break;
+                    env.IncrementDepth();
 
-                case INSTRUCTION_START_SUBROUTINE:
+                    callStack.push(pc);
+                    pc = it->second;
+                }
+                else
                 {
-                    jumpTable.emplace(*ins.value.GetId(), pc + 2);
-                } break;
-                case INSTRUCTION_JUMP_SUBROUTINE:
+                    LogError("Jump location doesn't exist '" + *arg.GetId()  + "'");
+                }
+            } break;
+            case OPCODE_RETURN_FROM_SUBROUTINE:
+            {
+                pc = callStack.top(); callStack.pop();
+                env.DecrementDepth();
+            } break;
+
+            case OPCODE_ADD:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
                 {
-                    auto it = jumpTable.find(*ins.value.GetId());
-                    if(it != jumpTable.end())
-                    {
-                        callStack.push(pc + 1);
-                        pc = it->second;
-                    }
-                    else
-                    {
-                        LogError("Jump location doesn't exist '" + *ins.value.GetId()  + "'");
-                    }
-                    continue;
-                } break;
-                case INSTRUCTION_RETURN_FROM_SUBROUTINE:
-                {
-                    pc = callStack.top(); callStack.pop();
-                    continue;
-                } break;
-
-                case INSTRUCTION_ADD:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = *l.GetInt() + *r.GetInt();
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = *l.GetReal() + *r.GetReal();
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_MINUS:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = *l.GetInt() - *r.GetInt();
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = *l.GetReal() - *r.GetReal();
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_MULTIPLY:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = *l.GetInt() * *r.GetInt();
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = *l.GetReal() * *r.GetReal();
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_DIVIDE:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = *l.GetInt() / *r.GetInt();
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = *l.GetReal() / *r.GetReal();
-                        stack.push(result);
-                    }
-                } break;
-
-                case INSTRUCTION_COMP_LESS:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() < *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() < *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_COMP_GREATER:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() > *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() > *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_COMP_LESS_EQUAL:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() <= *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() <= *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_COMP_GREATER_EQUAL:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() >= *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() >= *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_COMP_EQUAL:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() == *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() == *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-                case INSTRUCTION_COMP_NOT_EQUAL:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    if(l.IsInt())
-                    {
-                        Value result = (bool)(*l.GetInt() != *r.GetInt());
-                        stack.push(result);
-                    }
-                    else if(l.IsReal())
-                    {
-                        Value result = (bool)(*l.GetReal() != *r.GetReal());
-                        stack.push(result);
-                    }
-                } break;
-
-                case INSTRUCTION_COMP_AND:
-                {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    Value result = (bool)(*l.GetBool() && *r.GetBool());
+                    Value result = *l.GetInt() + *r.GetInt();
                     stack.push(result);
-                } break;
-                case INSTRUCTION_COMP_OR:
+                }
+                else if(l.IsReal())
                 {
-                    Value r = stack.top(); stack.pop();
-                    Value l = stack.top(); stack.pop();
-
-                    Value result = (bool)(*l.GetBool() || *r.GetBool());
+                    Value result = *l.GetReal() + *r.GetReal();
                     stack.push(result);
-                } break;
+                }
+            } break;
+            case OPCODE_MINUS:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
 
-                case INSTRUCTION_STORE_ARRAY:
+                if(l.IsInt())
                 {
-                    Value size = stack.top(); stack.pop();
-
-                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
-
-                    Value arr;
-
-                    auto id = env.FindIdentifier(name);
-                    if(id) {
-                        env.SetIdentifier(name, arr);
-                    }
-                    else {
-                        env.CreateIdentifier(name);
-                        env.SetIdentifier(name, arr);
-                    }
-                } break;
-                case INSTRUCTION_STORE_ARRAY_INDEX:
+                    Value result = *l.GetInt() - *r.GetInt();
+                    stack.push(result);
+                }
+                else if(l.IsReal())
                 {
-                    Value idx = stack.top(); stack.pop();
+                    Value result = *l.GetReal() - *r.GetReal();
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_MULTIPLY:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
 
-                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
-                } break;
-                case INSTRUCTION_LOAD_ARRAY_INDEX:
+                if(l.IsInt())
                 {
-                    Value idx = stack.top(); stack.pop();
-
-                    std::string name = *ins.value.GetId() + std::to_string(callStack.size());
-                } break;
-
-                default:
+                    Value result = *l.GetInt() * *r.GetInt();
+                    stack.push(result);
+                }
+                else if(l.IsReal())
                 {
-                    LogError("Invalid instruction type: " + std::to_string(ins));
-                } break;
-			}
+                    Value result = *l.GetReal() * *r.GetReal();
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_DIVIDE:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
 
-			pc++;
-		}
+                if(l.IsInt())
+                {
+                    Value result = *l.GetInt() / *r.GetInt();
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = *l.GetReal() / *r.GetReal();
+                    stack.push(result);
+                }
+            } break;
+
+            case OPCODE_COMP_LESS:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() < *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() < *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_COMP_GREATER:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() > *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() > *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_COMP_LESS_EQUAL:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() <= *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() <= *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_COMP_GREATER_EQUAL:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() >= *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() >= *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_COMP_EQUAL:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() == *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() == *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+            case OPCODE_COMP_NOT_EQUAL:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                if(l.IsInt())
+                {
+                    Value result = (bool)(*l.GetInt() != *r.GetInt());
+                    stack.push(result);
+                }
+                else if(l.IsReal())
+                {
+                    Value result = (bool)(*l.GetReal() != *r.GetReal());
+                    stack.push(result);
+                }
+            } break;
+
+            case OPCODE_COMP_AND:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                Value result = (bool)(*l.GetBool() && *r.GetBool());
+                stack.push(result);
+            } break;
+            case OPCODE_COMP_OR:
+            {
+                Value r = stack.top(); stack.pop();
+                Value l = stack.top(); stack.pop();
+
+                Value result = (bool)(*l.GetBool() || *r.GetBool());
+                stack.push(result);
+            } break;
+
+            case OPCODE_STORE_ARRAY:
+            {
+                Value arg = decodeConstant();
+                Value size = stack.top(); stack.pop();
+
+                std::string name = *arg.GetId();
+
+                Value arr;
+
+                auto id = env.FindIdentifier(name);
+                if(id) {
+                    env.SetIdentifier(name, arr);
+                }
+                else {
+                    env.CreateIdentifier(name);
+                    env.SetIdentifier(name, arr);
+                }
+            } break;
+            case OPCODE_STORE_ARRAY_INDEX:
+            {
+                Value arg = decodeConstant();
+                Value idx = stack.top(); stack.pop();
+
+                std::string name = *arg.GetId();
+            } break;
+            case OPCODE_LOAD_ARRAY_INDEX:
+            {
+                Value arg = decodeConstant();
+                Value idx = stack.top(); stack.pop();
+
+                std::string name = *arg.GetId();
+            } break;
+
+            default:
+            {
+                LogError("Invalid opcode type: " + std::to_string(opcode));
+            } break;
+        }
 	}
+    
+    void PrintProgram() {
+        pc = 0;
+
+        u64 programsize = sizeof(program) + (sizeof(program.at(0)) * program.size());
+        std::cout << " --- Bytecode Program, Size(bytes): " << programsize << " --- \n";
+        for(int i = 0; pc < program.size(); i++) {
+            std::cout << "# " << PrintOpCode() << '\n';
+        }
+    }
+
+    std::string PrintOpCode()
+    {
+        u8 opcode = GetByte();
+
+        std::string result;
+
+        switch(opcode)
+        {
+            case OPCODE_PUSH: { result = "PUSH"; } break;
+            case OPCODE_POP: { result = "POP"; } break;
+            case OPCODE_STORE: { result = "STORE"; } break;
+            case OPCODE_LOAD: { result = "LOAD"; } break;
+            case OPCODE_JUMP: { result = "JUMP"; } break;
+            case OPCODE_JUMP_IF_TRUE: { result = "JUMP_IF_TRUE"; } break;
+            case OPCODE_JUMP_IF_FALSE: { result = "JUMP_IF_FALSE"; } break;
+
+            case OPCODE_START_SUBROUTINE: { result = "START_SUBROUTINE"; } break;
+            case OPCODE_JUMP_SUBROUTINE: { result = "JUMP_SUBROUTINE"; } break;
+            case OPCODE_RETURN_FROM_SUBROUTINE: { result = "RETURN_FROM_SUBROUTINE"; } break;
+
+            case OPCODE_ADD: { result = "ADD"; } break;
+            case OPCODE_MINUS: { result = "MINUS"; } break;
+            case OPCODE_MULTIPLY: { result = "MULTIPLY"; } break;
+            case OPCODE_DIVIDE: { result = "DIVIDE"; } break;
+
+            case OPCODE_COMP_LESS: { result = "COMP_LESS"; } break;
+            case OPCODE_COMP_GREATER: { result = "COMP_GREATER"; } break;
+            case OPCODE_COMP_LESS_EQUAL: { result = "COMP_LESS_EQUAL"; } break;
+            case OPCODE_COMP_GREATER_EQUAL: { result = "COMP_GREATER_EQUAL"; } break;
+            case OPCODE_COMP_EQUAL: { result = "COMP_EQUAL"; } break;
+            case OPCODE_COMP_NOT_EQUAL: { result = "COMP_NOT_EQUAL"; } break;
+            case OPCODE_COMP_AND: { result = "COMP_AND"; } break;
+            case OPCODE_COMP_OR: { result = "COMP_OR"; } break;
+
+            case OPCODE_STORE_ARRAY: { result = "STORE_ARRAY"; } break;
+            case OPCODE_STORE_ARRAY_INDEX: { result = "STORE_ARRAY_INDEX"; } break;
+            case OPCODE_LOAD_ARRAY_INDEX: { result = "LOAD_ARRAY_INDEX"; } break;
+            default: { result = "INVALID OPCODE"; } break;
+        }
+
+        u64 argc = GetOpcodeArgC((OpCodeType)opcode);
+        if(argc == -1)
+        {
+            LogError("Opcode does not have an existing argc, '" + std::to_string(opcode) + "'");
+            return "";
+        }
+
+        for(int i = 0; i < argc; i++) {
+            if(i == 0) {
+                result += ": ";
+            }
+            else {
+                result += ", ";
+            }
+
+            result += std::to_string(decodeConstant());
+        }
+
+        return result;
+    }
 };
 
 struct BytecodeEmitter : NodeVisitor
@@ -2697,20 +3020,20 @@ struct BytecodeEmitter : NodeVisitor
         node->right->visit(this);
         switch(node->op.type)
         {
-            case TOKEN_PLUS: { program.emplace(INSTRUCTION_ADD); } break;
-            case TOKEN_MINUS: { program.emplace(INSTRUCTION_MINUS); } break;
-            case TOKEN_MULTIPLY: { program.emplace(INSTRUCTION_MULTIPLY); } break;
-            case TOKEN_DIVIDE: { program.emplace(INSTRUCTION_DIVIDE); } break;
+            case TOKEN_PLUS: { program.push(OPCODE_ADD); } break;
+            case TOKEN_MINUS: { program.push(OPCODE_MINUS); } break;
+            case TOKEN_MULTIPLY: { program.push(OPCODE_MULTIPLY); } break;
+            case TOKEN_DIVIDE: { program.push(OPCODE_DIVIDE); } break;
 
-            case TOKEN_EQUAL_EQUAL: { program.emplace(INSTRUCTION_COMP_EQUAL); } break;
-            case TOKEN_NOT_EQUAL: { program.emplace(INSTRUCTION_COMP_NOT_EQUAL); } break;
-            case TOKEN_LESS: { program.emplace(INSTRUCTION_COMP_LESS); } break;
-            case TOKEN_GREATER: { program.emplace(INSTRUCTION_COMP_GREATER); } break;
-            case TOKEN_LESS_EQUAL: { program.emplace(INSTRUCTION_COMP_LESS_EQUAL); } break;
-            case TOKEN_GREATER_EQUAL: { program.emplace(INSTRUCTION_COMP_GREATER_EQUAL); } break;
+            case TOKEN_EQUAL_EQUAL: { program.push(OPCODE_COMP_EQUAL); } break;
+            case TOKEN_NOT_EQUAL: { program.push(OPCODE_COMP_NOT_EQUAL); } break;
+            case TOKEN_LESS: { program.push(OPCODE_COMP_LESS); } break;
+            case TOKEN_GREATER: { program.push(OPCODE_COMP_GREATER); } break;
+            case TOKEN_LESS_EQUAL: { program.push(OPCODE_COMP_LESS_EQUAL); } break;
+            case TOKEN_GREATER_EQUAL: { program.push(OPCODE_COMP_GREATER_EQUAL); } break;
 
-            case TOKEN_AND: { program.emplace(INSTRUCTION_COMP_AND); } break;
-            case TOKEN_OR: { program.emplace(INSTRUCTION_COMP_OR); } break;
+            case TOKEN_AND: { program.push(OPCODE_COMP_AND); } break;
+            case TOKEN_OR: { program.push(OPCODE_COMP_OR); } break;
 
             default:
             {
@@ -2721,16 +3044,19 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(ValueNode* node)
     {
+        // TODO: Fix string's
         Value value(node->GetType(), node->token.text);
 
         if(value.IsId())
         {
-            program.emplace(INSTRUCTION_LOAD, value);
+            program.push(OPCODE_LOAD);
+            program.push(value);
         }
         else
         {
             if(node->negative) value.Negative();
-            program.emplace(INSTRUCTION_PUSH, value);
+            program.push(OPCODE_PUSH);
+            program.push(value);
         }
     }
 
@@ -2739,7 +3065,8 @@ struct BytecodeEmitter : NodeVisitor
         if(node->is_array)
         {
             node->value->visit(this);
-            program.emplace(INSTRUCTION_STORE_ARRAY, Value(node->id.text));
+            program.push(OPCODE_STORE_ARRAY);
+            program.push(Value(node->id.text));
         }
         else
         {
@@ -2749,10 +3076,12 @@ struct BytecodeEmitter : NodeVisitor
             }
             else
             {
-                program.emplace(INSTRUCTION_PUSH, Value((i64)0));
+                program.push(OPCODE_PUSH);
+                program.push(Value((i64)0));
             }
 
-            program.emplace(INSTRUCTION_STORE, Value(node->id.text));
+            program.push(OPCODE_STORE);
+            program.push(Value(node->id.text));
             previous_id = node->id.text;
         }
 	}
@@ -2760,27 +3089,29 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(AssignmentNode* node)
 	{
         node->value->visit(this);
-        program.emplace(INSTRUCTION_STORE, Value(VALUE_ID, node->id.text));
+        program.push(OPCODE_STORE);
+        program.push(Value(VALUE_ID, node->id.text));
 	}
 
     std::string previous_id = "";
 	void visit(FunctionNode* node)
 	{
-        program.emplace(INSTRUCTION_START_SUBROUTINE, Value(node->id.text));
-
+        program.push(OPCODE_START_SUBROUTINE);
+        program.push(Value(node->id.text));
         i64 start = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
+        program.push(Value((i64)0));
 
         for(int i = node->args.size() - 1; i >= 0; i--)
         {
             node->args[i]->visit(this);
-            program.emplace(INSTRUCTION_STORE, Value(previous_id));
+            program.push(OPCODE_STORE);
+            program.push(Value(previous_id));
         }
 
         node->block->visit(this);
-        program.emplace(INSTRUCTION_RETURN_FROM_SUBROUTINE);
+        program.push(OPCODE_RETURN_FROM_SUBROUTINE);
 
-        program.at(start).value = (i64)program.size();
+        program.replace(start, Value((i64)program.size()));
 	}
 
 	void visit(CallNode* node)
@@ -2789,7 +3120,9 @@ struct BytecodeEmitter : NodeVisitor
         {
             arg->visit(this);
         }
-        program.emplace(INSTRUCTION_JUMP_SUBROUTINE, Value(node->id.text));
+
+        program.push(OPCODE_JUMP_SUBROUTINE);
+        program.push(Value(node->id.text));
 	}
 
 	void visit(IfNode* node)
@@ -2797,21 +3130,30 @@ struct BytecodeEmitter : NodeVisitor
         node->cond->visit(this);
         if(node->elseblock == NULL)
         {
+
+            program.push(OPCODE_JUMP_IF_FALSE);
             i64 start = program.size();
-            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((i64)0));
+            program.push(Value((i64)0));
+
             node->block->visit(this);
-            program.at(start).value = (i64)program.size();
+            program.replace(start, Value((i64)program.size()));
         }
         else
         {
             i64 start = program.size();
-            program.emplace(INSTRUCTION_JUMP_IF_FALSE, Value((i64)0));
+
+            program.push(OPCODE_JUMP_IF_FALSE);
+            program.push(Value((i64)0));
+
             node->block->visit(this);
             i64 end = program.size();
-            program.emplace(INSTRUCTION_JUMP, Value((i64)0));
-            program.at(start).value = (i64)program.size();
+            
+            program.push(OPCODE_JUMP);
+            program.push(Value((i64)0));
+
+            program.replace(start, Value((i64)program.size()));
             node->elseblock->visit(this);
-            program.at(end).value = (i64)program.size();
+            program.replace(end, Value((i64)program.size()));
         }
 	}
 
@@ -2821,50 +3163,69 @@ struct BytecodeEmitter : NodeVisitor
 		if (node->init != NULL) node->init->visit(this);
         loopstart = program.size();
 		if (node->cond != NULL) node->cond->visit(this);
-        program.emplace(INSTRUCTION_JUMP_IF_TRUE, Value((i64)program.size() + 2));
+
+        program.push(OPCODE_JUMP_IF_TRUE);
+
+        i64 jumpoverloc = program.size();
+        program.push(Value((i64)0));
+
         breakloc = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
+
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)0));
+
+        program.replace(jumpoverloc, Value((i64)program.size()));
+
 		if (node->incr != NULL) node->incr->visit(this);
 		node->block->visit(this);
-        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
-        program.at(breakloc).value = (i64)program.size();
+
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)loopstart));
+
+        program.replace(breakloc, Value((i64)program.size()));
 	}
 
 	void visit(LoopNode* node)
 	{
-        program.emplace(INSTRUCTION_JUMP, Value((i64)program.size() + 2));
+        program.push(OPCODE_JUMP);
+
+        i64 jumpoverloc = program.size();
+        program.push(Value((i64)0));
+
         breakloc = program.size();
-        program.emplace(INSTRUCTION_JUMP, Value((i64)0));
+
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)0));
+
+        program.replace(jumpoverloc, Value((i64)program.size()));
+
         loopstart = program.size();
         node->block->visit(this);
-        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
-        program.at(breakloc).value = (i64)program.size();
+
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)loopstart));
+
+        program.replace(breakloc, Value((i64)program.size()));
 	}
 
 	void visit(ReturnNode* node)
     {
         if(node->expr != NULL) node->expr->visit(this);
-        program.emplace(INSTRUCTION_RETURN_FROM_SUBROUTINE);
+        program.push(OPCODE_RETURN_FROM_SUBROUTINE);
     }
 
 	void visit(BreakNode* node)
     {
-        program.emplace(INSTRUCTION_JUMP, Value((i64)breakloc ));
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)breakloc));
     }
 
 	void visit(ContinueNode* node)
     {
-        program.emplace(INSTRUCTION_JUMP, Value((i64)loopstart));
+        program.push(OPCODE_JUMP);
+        program.push(Value((i64)loopstart));
     }
 };
-
-void PrintProgram(Program program) {
-    std::cout << " --- BYTECODE PROGRAM, SIZE: " << program.size() << " --- \n";
-    for(int i = 0; i < program.size(); i++) {
-        auto ins = program.at(i);
-        std::cout << "[" << i << "]: " << std::to_string(ins) << '\n';
-    }
-}
 
 void PrintTokenStream(TokenStream stream) {
 	for (auto&& t : stream) {
@@ -2905,13 +3266,10 @@ int main() {
         parser.tree->visit(&bce);
 		if (error) return 1;
 
-        PrintProgram(bce.program);
-
-        VirtualMachine vm;
-        vm.Run(bce.program);
+        VirtualMachine vm(bce.program);
 		if (error) return 1;
         vm.PrintRestOfStack();
-        vm.PrintFinalSymbolTable();
+        vm.PrintGlobalSymbolTable();
 		
 		NodeFreeVisitor nfv;
 		parser.tree->visit(&nfv);
