@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <sstream>
+#include <cstring>
 
 /* --- Language Grammar ---
 <statement> ::= "if" <expression> <statement-block> ("else" <statement-block>)?
@@ -109,6 +110,14 @@ enum TokenType
 	TOKEN_LESS, TOKEN_GREATER, TOKEN_LESS_EQUAL, TOKEN_GREATER_EQUAL,
 
     TOKEN_AND, TOKEN_OR,
+
+    TOKEN_PTR,
+    TOKEN_ALLOC, TOKEN_FREE,
+    TOKEN_REF, TOKEN_DEREF, 
+
+    TOKEN_LIST, // list is "..."
+
+    TOKEN_DEFER,
 };
 
 struct Token
@@ -123,6 +132,7 @@ struct Token
     Token() = default;
     Token(const Token& other) = default;
     Token(TokenType type_) : type(type_) {}
+    Token(TokenType type_, std::string text_) : type(type_), text(text_) {}
 };
 
 namespace std {
@@ -143,6 +153,16 @@ std::map<std::string, TokenType> keywords = {
 
     { "true", TOKEN_LITERAL },
     { "false", TOKEN_LITERAL },
+
+    { "ptr", TOKEN_PTR },
+    { "alloc", TOKEN_ALLOC },
+    { "free", TOKEN_FREE },
+    { "ref", TOKEN_REF },
+    { "deref", TOKEN_DEREF },
+
+    { "...", TOKEN_LIST },
+
+    { "defer", TOKEN_DEFER },
 };
 
 enum IntegerSizes : u8 {
@@ -153,6 +173,46 @@ enum IntegerSizes : u8 {
 };
 
 class Value;
+
+enum ValueType : u8
+{
+    VALUE_NONE,
+
+    VALUE_ARRAY,
+    VALUE_INT, VALUE_REAL, VALUE_STR, VALUE_BOOL,
+    VALUE_ID,
+    VALUE_PTR
+};
+
+class PtrValue {
+private:
+    u8* ptr;
+    u64 size;
+    ValueType type;
+public:
+    PtrValue() = delete;
+    PtrValue(u8* ptr_, u64 size_, ValueType type_)
+        : ptr(ptr_), size(size_), type(type_)
+    {}
+
+    u8* GetPtr() {
+        return ptr;
+    }
+
+    u64 GetSize() {
+        switch(type)
+        {
+            case VALUE_ARRAY: { return size; } break;
+            case VALUE_INT: { return sizeof(u64); } break;
+            case VALUE_REAL: { return sizeof(double); } break;
+            case VALUE_STR: { return size; } break;
+            case VALUE_BOOL: { return sizeof(bool); } break;
+            case VALUE_ID: { return size; } break;
+            case VALUE_PTR: { return size; } break;
+        }
+        return 0;
+    }
+};
 
 class ArrayValue {
 private:
@@ -167,7 +227,7 @@ public:
     ArrayValue(const ArrayValue& other) = default;
 
     Value* at(u64 idx) {
-        return NULL;
+        return data.at(idx);
 
     }
 
@@ -190,19 +250,16 @@ namespace std {
     }
 }
 
-enum ValueType : u8
-{
-    VALUE_NONE,
-
-    VALUE_ARRAY,
-    VALUE_INT, VALUE_REAL, VALUE_STR, VALUE_BOOL,
-    VALUE_ID
+class FunctionValue {
+private:
+    ValueType returntype;
+    std::vector<ValueType> argtypes;
 };
 
 ValueType StringToValueType(std::string type)
 {
     // NOTE: Cant convert string to array.
-    if(type == "str") return VALUE_STR;
+    if(type == "string") return VALUE_STR;
     if(type == "int") return VALUE_INT;
     if(type == "float") return VALUE_REAL;
     if(type == "bool") return VALUE_BOOL;
@@ -217,7 +274,7 @@ namespace std {
             case VALUE_ARRAY: { return "array"; } break;
             case VALUE_INT: { return "int"; } break;
             case VALUE_REAL: { return "float"; } break;
-            case VALUE_STR: { return "str"; } break;
+            case VALUE_STR: { return "string"; } break;
             case VALUE_BOOL: { return "bool"; } break;
             case VALUE_ID: { return "id"; } break;
         }
@@ -353,6 +410,7 @@ public:
     bool IsStr() const { return type == VALUE_STR; }
     bool IsBool() const { return type == VALUE_BOOL; }
     bool IsId() const { return type == VALUE_ID; }
+    bool IsPtr() const { return type == VALUE_PTR; }
 
     ValueType& GetType() { return type; }
 
@@ -362,6 +420,7 @@ public:
     std::string* GetStr() const { return static_cast<std::string*>(data); }
     bool* GetBool() const { return static_cast<bool*>(data); }
     std::string* GetId() const { return static_cast<std::string*>(data); }
+    PtrValue* GetPtr() const { return static_cast<PtrValue*>(data); }
 
     void Negative()
     {
@@ -791,9 +850,18 @@ Program ToProgram(i64 value) {
     return result;
 }
 
-Program ToProgram(double value) {
+Program ToProgram(double fvalue) {
     Program result;
-    // TODO: Implementation
+
+    u64 value = reinterpret_cast<u64&>(fvalue);
+    result.push((u8)((value >>  0) & 0xff));
+    result.push((u8)((value >>  8) & 0xff));
+    result.push((u8)((value >> 16) & 0xff));
+    result.push((u8)((value >> 24) & 0xff));
+    result.push((u8)((value >> 32) & 0xff));
+    result.push((u8)((value >> 40) & 0xff));
+    result.push((u8)((value >> 48) & 0xff));
+    result.push((u8)((value >> 56) & 0xff));
     return result;
 }
 
@@ -805,7 +873,8 @@ Program ToProgram(bool value) {
 
 Program ToProgram(std::string value) {
     Program result = ToProgram(Value((i64)value.size()));
-    for(char c : value) {
+    for(int i = 0; i < value.size(); i++) {
+        char c = value.at(i);
         result.push(c);
     }
 
@@ -1561,20 +1630,25 @@ struct Parser
                     {
                         if(AdvanceIfMatch(TOKEN_COMMA))
                         {
-                            if(Node* size = Expression(); size != NULL)
-                            {
-                                if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+                            Node* size = Expression();
+                            if(size == NULL) {
+                                if(AdvanceIfMatch(TOKEN_LIST))
                                 {
-                                    return new VariableDeclNode(id, type, size, true);
+                                    size = new ValueNode(Token(TOKEN_LITERAL, "-1"));
                                 }
                                 else
                                 {
-                                    LogError("Array decleration must have a closing bracket", id.line, id.location);
+                                    LogError("Array size must be a valid expression", id.line, id.location);
                                 }
+                            }
+
+                            if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+                            {
+                                return new VariableDeclNode(id, type, size, true);
                             }
                             else
                             {
-                                LogError("Array size must be a valid expression", id.line, id.location);
+                                LogError("Array decleration must have a closing bracket", id.line, id.location);
                             }
                         }
                         else
@@ -1783,6 +1857,13 @@ struct Parser
 
             Advance();
             return new ValueNode(t, VALUE_ID);
+        }
+        else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
+        {
+            if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+            {
+                return new ValueNode(t, VALUE_ARRAY);
+            }
         }
 
         return NULL;
@@ -2278,6 +2359,11 @@ enum OpCodeType : u8
 
     OPCODE_STORE_ARRAY, OPCODE_STORE_ARRAY_INDEX, OPCODE_LOAD_ARRAY_INDEX,
 
+    OPCODE_STORE_PTR, OPCODE_LOAD_PTR,
+    OPCODE_ALLOC, OPCODE_FREE,
+
+    OPCODE_DEFER, OPCODE_EXEC_DEFER,
+
     OPCODE_MAX = 0xff
 };
 
@@ -2307,6 +2393,15 @@ std::map<OpCodeType,u64> OpCodeArgTable = {
     { OPCODE_STORE_ARRAY, 1 },
     { OPCODE_STORE_ARRAY_INDEX, 1 },
     { OPCODE_LOAD_ARRAY_INDEX, 1 },
+
+    { OPCODE_STORE_PTR, 1 },
+    { OPCODE_LOAD_PTR, 1 },
+    { OPCODE_ALLOC, 2 },
+    { OPCODE_FREE, 2 },
+
+    { OPCODE_DEFER, 1 },
+    { OPCODE_EXEC_DEFER, 0 },
+
 };
 
 u64 GetOpcodeArgC(OpCodeType op) {
@@ -2396,37 +2491,71 @@ struct Environment
 
 class MemoryArena {
 private:
-   void* mem = NULL;
+   u8* mem = NULL;
    size_t used = 0, allocated = 0;
 
-   static constexpr size_t defaultSize = sizeof(u8) * 10000;
+   struct FreeMem {
+       u8* loc;
+       u64 size;
+   };
+   std::vector<FreeMem> freestack;
 
-   void Extend() {
-       allocated *= 2;
+   static constexpr size_t defaultSize = 10000;
+
+   void resize(u64 size) {
+       allocated += size;
+       u8* newMem = new u8[allocated];
+       if(mem != NULL) {
+           memcpy(mem, newMem, used);
+           delete[] mem;
+       }
+       mem = newMem;
    }
+
 public:
    MemoryArena() {
-       mem = malloc(defaultSize);
        allocated = defaultSize;
+       resize(0);
    }
 
    ~MemoryArena() {
-       free(mem);
+       delete[] mem;
    }
 
-   template<typename T>
-   T* Request(u64 size) {
+   u8* Alloc(u64 size) {
+       for(int i = 0; i < freestack.size(); i++) {
+           FreeMem freed = freestack.at(i);
+           if(freed.size >= size) {
+               u64 left = freed.size - size;
+               freestack.erase(freestack.begin() + i);
+
+               if(size > 0) {
+                   FreeMem f = {
+                       freed.loc + size,
+                       left
+                   };
+                   freestack.push_back(f);
+               }
+
+               return freed.loc;
+           }
+       }
+
        used += size;
 
        if(used > allocated) {
-           Extend();
+           resize(allocated * 1.5);
        }
 
-       return (T*)(mem + used); 
+       return (mem + used); 
    }
 
-   void Free(u64 loc, u64 size) {
-
+   void Free(PtrValue value) {
+       FreeMem f = {
+           value.GetPtr(),
+           value.GetSize()
+       };
+       freestack.push_back(f);
    }
 };
 
@@ -2438,11 +2567,12 @@ private:
 
 	Stack<Value> stack;
     Stack<PLoc> callStack;
+    Stack<Program> deferstack;
 
     std::map<std::string,PLoc> jumpTable;
 
 	Environment env;
-    //MemoryArena memory;
+    MemoryArena memory;
 
     Program program;
 public:
@@ -2467,7 +2597,7 @@ public:
         {
             Environment::Variable& var = env.varstack.at(i);
             if(var.depth > 0) continue;
-            std::cout << var.name << " : " << std::to_string(var.value) << '\n';
+            std::cout << var.name << ": " << std::to_string(var.value) << '\n';
         }
         std::cout << "\n";
     }
@@ -2573,6 +2703,10 @@ public:
 
                 return Value(reinterpret_cast<double&>(finalValue));
             } break;
+            case VALUE_BOOL:
+            {
+                return Value((bool)GetByte());
+            } break;
             case VALUE_STR:
             {
                 Value size = decodeConstant();
@@ -2581,11 +2715,7 @@ public:
                     str.append(1, GetByte());
                 }
 
-                return Value(str);
-            } break;
-            case VALUE_BOOL:
-            {
-                return Value((bool)GetByte());
+                return Value((ValueType)type, str);
             } break;
             case VALUE_ID:
             {
@@ -2595,7 +2725,7 @@ public:
                     id.append(1, GetByte());
                 }
 
-                return Value(id);
+                return Value((ValueType)type, id);
             } break;
 
             default:
@@ -2918,6 +3048,35 @@ public:
                 std::string name = *arg.GetId();
             } break;
 
+            case OPCODE_STORE_PTR:
+            {
+                Value loc = decodeConstant();
+            } break;
+            case OPCODE_LOAD_PTR:
+            {
+                Value loc = decodeConstant();
+            } break;
+            case OPCODE_ALLOC:
+            {
+                Value size = decodeConstant();
+
+                Value ptr = memory.Alloc(*size.GetInt());
+                stack.push(ptr);
+            } break;
+            case OPCODE_FREE:
+            {
+                Value v = decodeConstant();
+                memory.Free(*v.GetPtr());
+            } break;
+
+            case OPCODE_DEFER:
+            {
+                Value size = decodeConstant();
+            } break;
+            case OPCODE_EXEC_DEFER:
+            {
+            } break;
+
             default:
             {
                 LogError("Invalid opcode type: " + std::to_string(opcode));
@@ -2972,6 +3131,14 @@ public:
             case OPCODE_STORE_ARRAY: { result = "STORE_ARRAY"; } break;
             case OPCODE_STORE_ARRAY_INDEX: { result = "STORE_ARRAY_INDEX"; } break;
             case OPCODE_LOAD_ARRAY_INDEX: { result = "LOAD_ARRAY_INDEX"; } break;
+
+            case OPCODE_STORE_PTR: { result = "STORE_PTR"; } break;
+            case OPCODE_LOAD_PTR: { result = "LOAD_PTR"; } break;
+            case OPCODE_ALLOC: { result = "ALLOC"; } break;
+            case OPCODE_FREE: { result = "FREE"; } break;
+            case OPCODE_DEFER: { result = "DEFER"; } break;
+            case OPCODE_EXEC_DEFER: { result = "EXEC_DEFER"; } break;
+
             default: { result = "INVALID OPCODE"; } break;
         }
 
@@ -3140,15 +3307,15 @@ struct BytecodeEmitter : NodeVisitor
         }
         else
         {
-            i64 start = program.size();
 
             program.push(OPCODE_JUMP_IF_FALSE);
+            i64 start = program.size();
             program.push(Value((i64)0));
 
             node->block->visit(this);
-            i64 end = program.size();
             
             program.push(OPCODE_JUMP);
+            i64 end = program.size();
             program.push(Value((i64)0));
 
             program.replace(start, Value((i64)program.size()));
@@ -3165,12 +3332,11 @@ struct BytecodeEmitter : NodeVisitor
 		if (node->cond != NULL) node->cond->visit(this);
 
         program.push(OPCODE_JUMP_IF_TRUE);
-
         i64 jumpoverloc = program.size();
         program.push(Value((i64)0));
 
-        breakloc = program.size();
 
+        breakloc = program.size();
         program.push(OPCODE_JUMP);
         program.push(Value((i64)0));
 
@@ -3182,18 +3348,16 @@ struct BytecodeEmitter : NodeVisitor
         program.push(OPCODE_JUMP);
         program.push(Value((i64)loopstart));
 
-        program.replace(breakloc, Value((i64)program.size()));
+        program.replace(breakloc+1, Value((i64)program.size()));
 	}
 
 	void visit(LoopNode* node)
 	{
         program.push(OPCODE_JUMP);
-
         i64 jumpoverloc = program.size();
         program.push(Value((i64)0));
 
         breakloc = program.size();
-
         program.push(OPCODE_JUMP);
         program.push(Value((i64)0));
 
@@ -3205,7 +3369,7 @@ struct BytecodeEmitter : NodeVisitor
         program.push(OPCODE_JUMP);
         program.push(Value((i64)loopstart));
 
-        program.replace(breakloc, Value((i64)program.size()));
+        program.replace(breakloc+1, Value((i64)program.size()));
 	}
 
 	void visit(ReturnNode* node)
@@ -3289,6 +3453,11 @@ int main() {
         // TODO: Implement any type.
         // TODO: Implement variadic args.
         // TODO: Implement ptr's
+
+        // built-in functions:
+        // println(...)
+        // len(list)
+        // at(list, idx)
 	}
 	else {
 		LogError("Source is empty");

@@ -15,13 +15,11 @@ func add_three(n1 : int, n2 : int, n3 : int) : int {
 
 number_two := add_three(3, 2, 1);
 
-/* TODO: This brokey
-if 5 != 2 {
+if 5 == 2 {
     n_one := add_three(7,8,9);
 } else {
     n_two := add_three(number_two, number, 6);
 }
-*/
 
 fourteen := factorial(7);
 
@@ -32,21 +30,47 @@ func fibonacci(n : int) : int {
 }
 
 fib := fibonacci(2);
-
 */
 
-/* Double brokey
-i := 0;
-loop {
+f := 5.6;
+f = f * 2.5;
+f = f + 2.71235;
+
+name := "hello"; // TODO: String's broke in the VM.
+
+/*
+// ------------------------
+// --- array's / list's ---
+// ------------------------
+
+fixed_array : [string, 5] = ["james", "roisin", "ewan", "natasha", "dylan"];
+infered_fixed_array := ["james", "roisin", "ewan", "natasha", "dylan"];
+list : [string, ...];
+
+for int i = 0, i < len(list), i += 1 {
+    name := at(list, i);
+    println(name);
 }
-    if i < 10 {
-        i = i + 1;
-        continue;
-    }
-    else {
-        break;
-    }
-    
-    i = i * 2;
+
+// --------------------------------
+// --- manual memory management ---
+// --------------------------------
+
+typed_pointer : ptr int = alloc 527;
+free typed_pointer;
+
+infered_pointer := alloc 237;
+free infered_pointer;
+
+local := 25;
+ptr_to_local := ref local
+deref ptr_to_lcal += 5; // "local" now equals "30"
+
+func double(num : ptr int) {
+    deref num *= 2;
 }
+
+value := 5;
+double(value); // "value" now equals "10"
+
 */
