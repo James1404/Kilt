@@ -174,6 +174,7 @@ enum IntegerSizes : u8 {
 
 class Value;
 
+// TODO: Turn this into a full class with more complex type's like functions with arg's and return types.
 enum ValueType : u8
 {
     VALUE_NONE,
