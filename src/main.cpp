@@ -102,12 +102,15 @@ enum TokenType
 	TOKEN_IF, TOKEN_ELSE, TOKEN_FUNC, TOKEN_FOR, TOKEN_LOOP,
 	TOKEN_RETURN, TOKEN_BREAK, TOKEN_CONTINUE,
 
+	TOKEN_EQUAL, TOKEN_NOT,
+
 	TOKEN_PLUS, TOKEN_MINUS, TOKEN_DIVIDE, TOKEN_MULTIPLY,
 
-	TOKEN_EQUAL, TOKEN_NOT,
+    TOKEN_PLUS_EQUAL, TOKEN_MINUS_EQUAL, TOKEN_MULTIPLY_EQUAL, TOKEN_DIVIDE_EQUAL,
 
 	TOKEN_EQUAL_EQUAL, TOKEN_NOT_EQUAL,
 	TOKEN_LESS, TOKEN_GREATER, TOKEN_LESS_EQUAL, TOKEN_GREATER_EQUAL,
+
 
     TOKEN_AND, TOKEN_OR,
 
@@ -175,8 +178,7 @@ enum IntegerSizes : u8 {
 class Value;
 
 // TODO: Turn this into a full class with more complex type's like functions with arg's and return types.
-enum ValueType : u8
-{
+enum ValueType : u8 {
     VALUE_NONE,
 
     VALUE_ARRAY,
@@ -328,9 +330,6 @@ private:
         if(b == '"' && e == '"')
         {
             std::string r = text;
-            r.erase(0,1);
-            r.erase(r.size(),1);
-
             data = new std::string(r);
             type = VALUE_STR;
         }
@@ -892,7 +891,7 @@ private:
 
 	int location = 0;
 
-	void Advance()
+	void advance()
 	{
 		if (location + 1 > source.size())
 		{
@@ -902,7 +901,7 @@ private:
 		location++;
 	}
 
-	char Peek()
+	char peek()
 	{
 		if (location + 1 > source.size())
 		{
@@ -912,11 +911,11 @@ private:
 		return source.at(location + 1);
 	}
 
-	bool Match(char c)
+	bool match(char c)
 	{
-		if (Peek() == c)
+		if (peek() == c)
 		{
-			Advance();
+			advance();
 			return true;
 		}
 
@@ -955,25 +954,25 @@ private:
 			case '.': { token.type = TOKEN_DOT; } break;
 			case ',': { token.type = TOKEN_COMMA; } break;
 
-			case '+': { token.type = TOKEN_PLUS; } break;
-			case '-': { token.type = TOKEN_MINUS; } break;
-			case '*': { token.type = TOKEN_MULTIPLY; } break;
+            case '+': { token.type = match('=') ? TOKEN_PLUS_EQUAL : TOKEN_PLUS; } break;
+			case '-': { token.type = match('=') ? TOKEN_MINUS_EQUAL : TOKEN_MINUS; } break;
+			case '*': { token.type = match('=') ? TOKEN_MULTIPLY_EQUAL : TOKEN_MULTIPLY; } break;
 			case '/':
 			{
-				if (Peek() == '/')
+				if (peek() == '/')
 				{
-					while (Peek() != '\n')
+					while (peek() != '\n')
 					{
-						Advance();
+						advance();
 					}
 
 					line++;
 					continue;
 				}
-                else if(Peek() == '*')
+                else if(peek() == '*')
                 {
-                    Advance();
-                    Advance();
+                    advance();
+                    advance();
 
                     int nested = 1;
                     while(nested > 0)
@@ -983,50 +982,50 @@ private:
                             line++;
                         }
 
-                        if(GetCurrent() == '/' && Peek() == '*')
+                        if(GetCurrent() == '/' && peek() == '*')
                         {
                             nested++;
                         }
-                        else if(GetCurrent() == '*' && Peek() == '/')
+                        else if(GetCurrent() == '*' && peek() == '/')
                         {
                             nested--;
                         }
 
-                        Advance();
+                        advance();
                     }
 
                     continue;
                 }
 				else
 				{
-					token.type = TOKEN_DIVIDE;
+					token.type = match('=') ? TOKEN_DIVIDE_EQUAL : TOKEN_DIVIDE;
 				}
 			} break;
 
 			case '=':
 			{
-				token.type = Match('=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL;
+				token.type = match('=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL;
 			} break;
 			case '!':
 			{
-				token.type = Match('=') ? TOKEN_NOT_EQUAL : TOKEN_NOT_EQUAL;
+				token.type = match('=') ? TOKEN_NOT_EQUAL : TOKEN_NOT_EQUAL;
 			} break;
 			case '<':
 			{
-				token.type = Match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS;
+				token.type = match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS;
 			} break;
 			case '>':
 			{
-				token.type = Match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER;
+				token.type = match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER;
 			} break;
 
             case '&':
             {
-				if(Match('&')) { token.type = TOKEN_AND; break; }
+				if(match('&')) { token.type = TOKEN_AND; break; }
             }
             case '|':
             {
-				if(Match('|')) { token.type = TOKEN_OR; break; }
+				if(match('|')) { token.type = TOKEN_OR; break; }
             }
 
             case '"':
@@ -1034,7 +1033,7 @@ private:
                 do
                 {
                     token.size++;
-                    Advance();
+                    advance();
                 }
                 while(GetCurrent() != '"');
 
@@ -1059,10 +1058,10 @@ private:
 
 				if (IsNumber(c))
 				{
-					while (IsNumber(Peek()) || Peek() == '.')
+					while (IsNumber(peek()) || peek() == '.')
 					{
 						token.size++;
-						Advance();
+						advance();
 					}
 
 					token.text = source.substr(token.location, token.size);
@@ -1070,10 +1069,10 @@ private:
 				}
 				else if (IsLetter(c))
 				{
-					while (IsLetter(Peek()) || IsNumber(Peek()) || Peek() == '_')
+					while (IsLetter(peek()) || IsNumber(peek()) || peek() == '_')
 					{
 						token.size++;
-						Advance();
+						advance();
 					}
 
 					token.text = source.substr(token.location, token.size);
@@ -1184,9 +1183,6 @@ struct ValueNode : Node
 {
     Token token;
     bool negative = false;
-    // array_idx == -1 : not an array
-    // array_idx > -1 : array index
-    Value array_idx = (i64)-1;
 
 	ValueNode(Token token_, bool negative_ = false)
         : token(token_), negative(negative_)
@@ -1195,20 +1191,8 @@ struct ValueNode : Node
 	ValueNode(Token token_, ValueType type_, bool negative_ = false)
         : token(token_), type(type_), negative(negative_)
     {}
-    
-	ValueNode(Token token_, Value idx)
-        : token(token_), type(VALUE_ID), array_idx(idx)
-    {}
-private:
-    ValueType type = VALUE_NONE;
-public:
-    void SetType(ValueType type_) {
-        type = type_;
-    }
 
-    ValueType GetType() {
-        return type;
-    }
+    ValueType type = VALUE_NONE;
 
 	VISIT_
 };
@@ -1369,7 +1353,7 @@ struct Parser
 
 	Node* tree = NULL;
 
-	void Advance(int n = 1)
+	void advance(int n = 1)
 	{
 		if (location < stream.size() - n)
 		{
@@ -1378,7 +1362,7 @@ struct Parser
 		}
 	}
 
-    Token Peek()
+    Token peek()
     {
         if(location < stream.size() - 1)
             return stream.at(location + 1);
@@ -1390,7 +1374,7 @@ struct Parser
     {
         if(current.type == match)
         {
-            Advance();
+            advance();
             return true;
         }
 
@@ -1491,7 +1475,7 @@ struct Parser
 		else if (AdvanceIfMatch(TOKEN_FUNC))
 		{
 			Token id = current;
-			Advance();
+			advance();
 
 			if (AdvanceIfMatch(TOKEN_LEFT_PARENTHESIS))
 			{
@@ -1503,7 +1487,7 @@ struct Parser
 					if (AdvanceIfMatch(TOKEN_COLON))
 					{
 						returntype = current;
-                        Advance();
+                        advance();
 					}
 
 					Node* block = StatementBlock();
@@ -1599,14 +1583,14 @@ struct Parser
     {
         if(Token id = current; id.type == TOKEN_IDENTIFIER)
         {
-            if(Peek().type == TOKEN_COLON)
+            if(peek().type == TOKEN_COLON)
             {
-                Advance(2);
+                advance(2);
 
                 if(current.type == TOKEN_IDENTIFIER)
                 {
                     Token type = current;
-                    Advance();
+                    advance();
 
                     if(AdvanceIfMatch(TOKEN_EQUAL))
                     {
@@ -1688,10 +1672,29 @@ struct Parser
         if(Token id = current; id.type == TOKEN_IDENTIFIER)
         {
             // TODO: Implement array indexing e.g. names[5] = "James";
-            if(Peek().type == TOKEN_EQUAL)
+            if(peek().type == TOKEN_EQUAL)
             {
-                Advance(2);
+                advance(2);
                 return new AssignmentNode(id, Expression());
+            }
+            else if(peek().type == TOKEN_PLUS_EQUAL || 
+                    peek().type == TOKEN_MINUS_EQUAL ||
+                    peek().type == TOKEN_MULTIPLY_EQUAL ||
+                    peek().type == TOKEN_DIVIDE_EQUAL)
+            {
+                Token op = peek();
+                advance(2);
+
+                switch(op.type)
+                {
+                    case TOKEN_PLUS_EQUAL: op.type = TOKEN_PLUS; break;
+                    case TOKEN_MINUS_EQUAL: op.type = TOKEN_MINUS; break;
+                    case TOKEN_MULTIPLY_EQUAL: op.type = TOKEN_MULTIPLY; break;
+                    case TOKEN_DIVIDE_EQUAL: op.type = TOKEN_DIVIDE; break;
+                }
+
+                Node* binary = new BinaryNode(new ValueNode(id), op, Expression());
+                return new AssignmentNode(id, binary);
             }
         }
 
@@ -1699,10 +1702,18 @@ struct Parser
     }
 
     Node* Identifier() {
-        Token id = current;
-        if(AdvanceIfMatch(TOKEN_IDENTIFIER))
+        // TODO: Implement this.
+        if(Token id = current; AdvanceIfMatch(TOKEN_IDENTIFIER))
         {
+            if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
+            {
+                // NOTE: Is array
+                Node* size = Expression();
+                if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+                {
 
+                }
+            }
         }
 
         return NULL;
@@ -1766,16 +1777,16 @@ struct Parser
     {
         if(current.type == TOKEN_IDENTIFIER)
         {
-            if(Peek().type == TOKEN_LEFT_PARENTHESIS)
+            if(peek().type == TOKEN_LEFT_PARENTHESIS)
             {
                 Token id = current;
-                Advance(2);
+                advance(2);
 
                 auto arg_list = ArgumentList();
 
                 if(current.type == TOKEN_RIGHT_PARENTHESIS)
                 {
-                    Advance();
+                    advance();
                     return new CallNode(id, arg_list);
                 }
                 else
@@ -1794,7 +1805,7 @@ struct Parser
         while(GetPrecedence(current) >= min_precedence)
         {
             Token op = t;
-            Advance();
+            advance();
             Node* rhs = Literal();
             t = current;
             while(GetPrecedence(t) > GetPrecedence(op))
@@ -1817,10 +1828,10 @@ struct Parser
         }
         else if(t.type == TOKEN_MINUS)
         {
-            t = Peek();
+            t = peek();
             if(t.type == TOKEN_LITERAL)
             {
-                Advance(2);
+                advance(2);
                 return new ValueNode(t, true);
             }
         }
@@ -1851,12 +1862,12 @@ struct Parser
                 Token idx = current;
                 if(idx.type == TOKEN_LITERAL) {
                     if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET)) {
-                        return new ValueNode(t, idx);
+                        return new ValueNode(t/*, idx*/);
                     }
                 }
             }
 
-            Advance();
+            advance();
             return new ValueNode(t, VALUE_ID);
         }
         else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
@@ -1889,9 +1900,9 @@ struct ScopedSymbolTable {
         : parent(parent_)
     {}
 
-	std::map<std::string, std::string> typetable;
+	std::map<std::string, ValueType> typetable;
 
-	void SetType(std::string name, std::string type)
+	void SetType(std::string name, ValueType type)
 	{
 		typetable[name] = type;
 	}
@@ -1899,10 +1910,9 @@ struct ScopedSymbolTable {
 	ValueType FindType(std::string name)
 	{
 		auto it = typetable.find(name);
-		if (it != typetable.end()) return StringToValueType(it->second);
+		if (it != typetable.end()) return it->second;
 
 		if (parent != NULL) return parent->FindType(name);
-
 		return VALUE_NONE;
 	}
 
@@ -2094,7 +2104,7 @@ public:
             }
         }
 
-        current->SetType(node->id.text, std::to_string(vartype));
+        current->SetType(node->id.text, vartype);
         if(is_arg) stack.push(vartype);
 	}
 
@@ -3158,7 +3168,8 @@ public:
                 result += ", ";
             }
 
-            result += std::to_string(decodeConstant());
+            Value arg = decodeConstant();
+            result += std::to_string(arg);
         }
 
         return result;
@@ -3213,7 +3224,7 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(ValueNode* node)
     {
         // TODO: Fix string's
-        Value value(node->GetType(), node->token.text);
+        Value value(node->type, node->token.text);
 
         if(value.IsId())
         {
@@ -3447,18 +3458,18 @@ int main() {
         // TODO: Make type's an explicit value;
         // TODO: Quasiquotation
 
-        // TODO: Implement +=, -= operator's etc.
-        // TODO: Implement intrinsic function's like println
         // TODO: Implement out of order function calling.
         // TODO: Implement default arg value.
         // TODO: Implement any type.
         // TODO: Implement variadic args.
         // TODO: Implement ptr's
 
-        // built-in functions:
-        // println(...)
+        // TODO: Implement intrinsic function's like
+        // println(args : any ...)
         // len(list)
         // at(list, idx)
+
+        // TODO: Variable attributs like const, ptr, and ...
 	}
 	else {
 		LogError("Source is empty");
