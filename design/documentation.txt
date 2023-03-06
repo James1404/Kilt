@@ -1,3 +1,7 @@
+// THIS IS A SINGLE LINE COMMENT
+/* THIS IS A MULTILINE COMMENT */
+
+/*
 This is the documentation for the Kilt programming language.
 
 --- INTRODUCTION ---
@@ -18,6 +22,7 @@ represents a true / false value
 - ARRAY -
 represents a sequence of data for e.g. [1,2,3,4,5,6,7,23,40], their type is declared as [type, size or "..." for a dynamic array]
 for e.g.
+*/
 
 // This is a fixed sized array
 People : [string, 5] = ["James", "Nathan", "Ewan", "Jake", "Frank"]
@@ -27,7 +32,7 @@ People : [string, ...]; // this can then be added to using the += operator
 People += "James";
 People += "Nathan";
 // -= is used to erase a character at a index
-People -= 5; // this erases the value at index 5
+People -= 0; // this erases the value at index 0
 
 // arrays can also be declared as a literal for e.g. [5, 25, 50, 102] this is an array literal with 4 elements using
 // this in a variable decleration allow's it to be infered as an array
@@ -38,12 +43,14 @@ Ages := [17,15,47,19];
 
 Ages : [int, 4] = [17,15,47,19];
 
+/*
 - STRING -
 a string respresents a array of characters, its formed by wrapping text with two speech marks for e.g. "hello, world!"
 
 - FUNCTION -
 a function represents a procedure that can takes a set of parameters and can returns a value
 for e.g.
+*/
 
 func Add(num1 : int, num2 : int) : int {
 	 return num1 + num2;
@@ -62,9 +69,11 @@ func fibonacci(n : int) : int {
 
 fibonacci(12); // returns 144
 
+/*
 - CLASSES -
 these are a way to define more complex types, there are built up of members and methods, that can be called and manipulated.
 for e.g.
+*/
 
 class Person {
 	  age : int;
@@ -96,6 +105,7 @@ Ewan.Birthday();
 // Classes can also be used in arrays
 People : [Person, 5] = [NewPerson("Ewan", 52),NewPerson("James",17),NewPerson("Natasha", 49)]
 
+/*
 -- CONTROL FLOW ---
 
 there are 3 main ways to control the flow of your application, if statements, loops, and for loops.
@@ -103,6 +113,7 @@ there are 3 main ways to control the flow of your application, if statements, lo
 - IF STATEMENT -
 if statements allow you to execute a branch of code depending on if a condition is met
 for e.g.
+*/
 
 if 5 > 2 {
    // this only prints the condition is true
@@ -112,8 +123,10 @@ else { // else can be used to execute code if the condition is not met
 	 println("Lesser");
 }
 
+/*
 - LOOPS -
 a loop is block of code that will execute indefinetely until explicitely told otherwise, using the "break" keyword
+*/
 
 i := 0;
 loop {
@@ -124,10 +137,12 @@ loop {
 	 i += 1;
 }
 
+/*
 - FOR LOOPS -
 are a form of condition loops, they consist of an initialisation, a condition, and an incremetation, all of
 which are followed by a code block
 for e.g.
+*/
 
 for i := 0, i < 25, i += 1 {
 	println(i);

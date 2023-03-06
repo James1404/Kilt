@@ -438,6 +438,18 @@ public:
         }
     }
 
+    void Not()
+    {
+        if(IsBool())
+        {
+            *GetBool() = !*GetBool();
+        }
+        else
+        {
+            LogError("Cannot use '!' on type '" + GetTypeAsString() + "'");
+        }
+    }
+
     Value() = default;
 
     ~Value() {
@@ -794,7 +806,7 @@ public:
         stream.insert(end(), p.begin(), p.end());
     }
 
-    u8& at(size_t idx) {
+    u8& at(u64 idx) {
         return stream.at(idx);
     }
 
@@ -809,6 +821,10 @@ public:
     void replace(u64 idx, Value val) {
         Program other = ToProgram(val);
         replace(idx, other);
+    }
+
+    Program subprogram(u64 start, u64 size) {
+        return{};
     }
 };
 
@@ -1111,6 +1127,7 @@ struct LoopNode;
 struct ReturnNode;
 struct BreakNode;
 struct ContinueNode;
+struct DeferNode;
 
 struct NodeVisitor
 {
@@ -1128,6 +1145,7 @@ struct NodeVisitor
 	virtual void visit(ReturnNode* node) = 0;
 	virtual void visit(BreakNode* node) = 0;
 	virtual void visit(ContinueNode* node) = 0;
+	virtual void visit(DeferNode* node) = 0;
 };
 
 #define PRINT_FREED_MEMORY false
@@ -1316,6 +1334,13 @@ struct ContinueNode : Node
         : id(id_)
     {}
 
+    VISIT_
+};
+
+struct DeferNode : Node {
+    Node* stat;
+
+    DeferNode(Node* stat_) : stat(stat_) {}
     VISIT_
 };
 
@@ -1536,6 +1561,16 @@ struct Parser
             else
             {
                 LogError("Break must end with a semicolon", current.line, current.location);
+            }
+        }
+        else if(AdvanceIfMatch(TOKEN_DEFER))
+        {
+            if(Node* stat = Statement(); stat != NULL) {
+                return new DeferNode(stat);
+            }
+            else
+            {
+                LogError("Defer statement must have a valid statement", current.line, current.location);
             }
         }
 
@@ -1954,6 +1989,7 @@ private:
     bool is_arg = false;
 
     ValueType returntype = VALUE_NONE;
+    bool got_return = false;
     bool in_loop = false;
     bool in_func = false;
 public:
@@ -2136,12 +2172,18 @@ public:
         is_arg = false;
 
         returntype = StringToValueType(node->returntype.text);
-
         current->parent->SetFunction(node->id.text, FunctionData(returntype, args));
+
+        got_return = false;
 
         in_func = true;
         node->block->visit(this);
         in_func = false;
+
+        if(returntype != VALUE_NONE && !got_return) {
+            LogError("Function '" + node->id.text + "' expect's an '" + node->returntype.text + "' to be returned, but never get's one.");
+            // TODO: Check if all code path's return a value.
+        }
 
         DeleteCurrent();
 	}
@@ -2228,6 +2270,8 @@ public:
         {
             LogError("Returned type '" + std::to_string(rtype) + "' is different as expected '" + std::to_string(returntype) + "'", node->id.line, node->id.location);
         }
+
+        got_return = true;
     }
 
 	void visit(BreakNode* node)
@@ -2244,6 +2288,10 @@ public:
         {
             LogError("Continue statement must be in a loop", node->id.line, node->id.location);
         }
+    }
+
+	void visit(DeferNode* node)
+    {
     }
 };
 
@@ -2348,6 +2396,12 @@ struct NodeFreeVisitor : NodeVisitor
 
 	void visit(BreakNode* node) {}
 	void visit(ContinueNode* node) {}
+
+	void visit(DeferNode* node)
+    {
+        node->stat->visit(this);
+        delete node->stat;
+    }
 };
 
 enum OpCodeType : u8
@@ -2373,7 +2427,7 @@ enum OpCodeType : u8
     OPCODE_STORE_PTR, OPCODE_LOAD_PTR,
     OPCODE_ALLOC, OPCODE_FREE,
 
-    OPCODE_DEFER, OPCODE_EXEC_DEFER,
+    OPCODE_START_DEFER, OPCODE_EXEC_DEFER,
 
     OPCODE_MAX = 0xff
 };
@@ -2410,7 +2464,7 @@ std::map<OpCodeType,u64> OpCodeArgTable = {
     { OPCODE_ALLOC, 2 },
     { OPCODE_FREE, 2 },
 
-    { OPCODE_DEFER, 1 },
+    { OPCODE_START_DEFER, 1 },
     { OPCODE_EXEC_DEFER, 0 },
 
 };
@@ -2570,17 +2624,16 @@ public:
    }
 };
 
-using PLoc = u64;
 class VirtualMachine
 {
 private:
     u64 pc = 0;
 
 	Stack<Value> stack;
-    Stack<PLoc> callStack;
-    Stack<Program> deferstack;
+    Stack<u64> callStack;
+    Stack<u64> deferstack;
 
-    std::map<std::string,PLoc> jumpTable;
+    std::map<std::string,u64> jumpTable;
 
 	Environment env;
     MemoryArena memory;
@@ -3080,12 +3133,17 @@ public:
                 memory.Free(*v.GetPtr());
             } break;
 
-            case OPCODE_DEFER:
+            case OPCODE_START_DEFER:
             {
                 Value size = decodeConstant();
+                deferstack.push(pc);
+                pc += *size.GetInt();
             } break;
             case OPCODE_EXEC_DEFER:
             {
+                if(!deferstack.empty()) {
+                    stack.pop();
+                }
             } break;
 
             default:
@@ -3147,7 +3205,7 @@ public:
             case OPCODE_LOAD_PTR: { result = "LOAD_PTR"; } break;
             case OPCODE_ALLOC: { result = "ALLOC"; } break;
             case OPCODE_FREE: { result = "FREE"; } break;
-            case OPCODE_DEFER: { result = "DEFER"; } break;
+            case OPCODE_START_DEFER: { result = "START_DEFER"; } break;
             case OPCODE_EXEC_DEFER: { result = "EXEC_DEFER"; } break;
 
             default: { result = "INVALID OPCODE"; } break;
@@ -3223,7 +3281,6 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(ValueNode* node)
     {
-        // TODO: Fix string's
         Value value(node->type, node->token.text);
 
         if(value.IsId())
@@ -3336,7 +3393,7 @@ struct BytecodeEmitter : NodeVisitor
         }
 	}
 
-    PLoc loopstart, breakloc;
+    u64 loopstart, breakloc;
 	void visit(ForNode* node)
 	{
 		if (node->init != NULL) node->init->visit(this);
@@ -3401,6 +3458,18 @@ struct BytecodeEmitter : NodeVisitor
         program.push(OPCODE_JUMP);
         program.push(Value((i64)loopstart));
     }
+
+	void visit(DeferNode* node)
+    {
+        program.push(OPCODE_START_DEFER);
+        u64 deferLoc = program.size();
+        program.push(Value((i64)0));
+        node->stat->visit(this);
+        program.push(OPCODE_JUMP);
+        u64 jumpLoc = 0;
+        program.push(Value((i64)0));
+        program.replace(deferLoc, Value((i64)program.size() - deferLoc));
+    }
 };
 
 void PrintTokenStream(TokenStream stream) {
@@ -3456,7 +3525,6 @@ int main() {
         // TODO: Think about explicit casting for e.g. (cast float)25
 
         // TODO: Make type's an explicit value;
-        // TODO: Quasiquotation
 
         // TODO: Implement out of order function calling.
         // TODO: Implement default arg value.
@@ -3468,8 +3536,6 @@ int main() {
         // println(args : any ...)
         // len(list)
         // at(list, idx)
-
-        // TODO: Variable attributs like const, ptr, and ...
 	}
 	else {
 		LogError("Source is empty");
