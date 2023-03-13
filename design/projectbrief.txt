@@ -1,0 +1,20 @@
+Project brief
+
+I will create a custom programming language, it
+will feature variables, functions, recursion, and
+a standard library which will contain common math
+functions, IO, and other small helper functions.
+The language will run in an interpreter
+written in haskell, the source text will be parsed into
+an Abstract Syntax Tree which will then be traversed for
+type-checking and finally execution.
+
+e.g. of some code:
+
+// code for finding the factorial
+func factorial(n : int) : int {
+	 if n == 0 return 1;
+	 return n * factorial(n - 1);
+}
+
+factorial(5); // output should be - 120
