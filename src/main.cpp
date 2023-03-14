@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <sstream>
 #include <cstring>
+#include <cassert>
 
 /* --- Language Grammar ---
 <statement> ::= "if" <expression> <statement-block> ("else" <statement-block>)?
@@ -179,10 +180,13 @@ class Value;
 
 // TODO: Turn this into a full class with more complex type's like functions with arg's and return types.
 enum ValueType : u8 {
-    VALUE_NONE,
+    VALUE_NONE = 0x00,
 
     VALUE_ARRAY,
-    VALUE_INT, VALUE_REAL, VALUE_STR, VALUE_BOOL,
+    VALUE_INT,
+    VALUE_REAL,
+    VALUE_BOOL,
+    VALUE_STR,
     VALUE_ID,
     VALUE_PTR
 };
@@ -221,30 +225,80 @@ class ArrayValue {
 private:
     // NOTE: If array value is 0 then it is dynamic.
     // NOTE: size > 0 then its fixed sized.
-    int size = 0;
-    std::vector<Value*> data;
+    size_t allocated = 0, used = 0;
+    Value* data = NULL;
 
-    Token type;
+    ValueType type;
+
+    void allocate(size_t size) {
+        /*
+        if (data == NULL) {
+            data = (Value*)malloc(sizeof(Value) * size);
+        }
+        else {
+            Value* temp = data;
+            data = (Value*)malloc(sizeof(Value) * size);
+            memcpy(temp, data, allocated);
+            delete[] temp;
+        }
+        allocated = size;
+        */
+    }
 public:
-    ArrayValue() = default;
-    ArrayValue(const ArrayValue& other) = default;
+    ArrayValue(ValueType type_, size_t size = -1)
+        : type(type_)
+    {
+        if (size > 0) {
+            allocate(size);
+        }
+        else {
+            allocate(10);
+        }
+    }
+
+    ArrayValue(const ArrayValue& other)
+        : allocated(other.allocated), used(other.used)
+    {
+        allocate(allocated);
+        memcpy(&data, &other.data, used); // TODO: Fix this its stupid probably
+    }
+    /*
+    void push(Value* v) {
+        assert(v->GetType() == type);
+
+        if (used >= allocated) {
+            allocate(allocated * 2);
+        }
+
+        data[used++] = *v;
+    }
+
+    void erase(u64 idx) {
+        assert(idx <= used);
+        memmove(&data[idx], &data[idx + 1], used - idx); // TODO: Confirm this works
+        used--;
+    }
+
+    ArrayValue slice(u64 start, u64 end) {
+        assert(start < end);
+        assert(end <= used);
+
+        u64 size = end - start;
+
+        ArrayValue result(type, size);
+        memcpy(result.data, &data[start], size);
+
+        return result;
+    }
 
     Value* at(u64 idx) {
-        return data.at(idx);
-
+        assert(idx <= used);
+        return &data[idx];
     }
 
-    void push() {
-
-    }
-
-    void remove(u64 idx) {
-
-    }
-
-    void pop(u64 count) {
-
-    }
+    size_t size() const {
+        return used;
+    }*/
 };
 
 namespace std {
@@ -536,10 +590,10 @@ public:
     {
         switch(type)
         {
-            case VALUE_ARRAY:
+            /*case VALUE_ARRAY:
             {
                 data = new ArrayValue();
-            } break;
+            } break;*/
             case VALUE_INT:
             {
                 data = new i64(0);
@@ -702,10 +756,12 @@ public:
         type = type_;
         switch(type)
         {
+            /*
             case VALUE_ARRAY:
             {
                 data = new ArrayValue();
             } break;
+            */
             case VALUE_INT:
             {
                 data = new i64(0);
@@ -751,12 +807,12 @@ namespace std {
     std::string to_string(Value other) {
         switch (other.GetType())
         {
-            case VALUE_ARRAY: { return std::to_string(*other.GetArray()) + ": " + std::to_string(other.GetType()); } break;
-            case VALUE_INT: { return std::to_string(*other.GetInt()) + ": " + std::to_string(other.GetType()); } break;
-            case VALUE_REAL: { return std::to_string(*other.GetReal()) + ": " + std::to_string(other.GetType()); } break;
-            case VALUE_STR: { return *other.GetStr() + ": " + std::to_string(other.GetType()); } break;
-            case VALUE_BOOL: { return (std::string)(*other.GetBool() ? "true" : "false") + ": " + std::to_string(other.GetType()); } break;
-            case VALUE_ID: { return *other.GetId() + ": " + std::to_string(other.GetType()); } break;
+            case VALUE_ARRAY: { return std::to_string(*other.GetArray()); } break;
+            case VALUE_INT: { return std::to_string(*other.GetInt()); } break;
+            case VALUE_REAL: { return std::to_string(*other.GetReal()); } break;
+            case VALUE_STR: { return '"' + *other.GetStr() + '"'; } break;
+            case VALUE_BOOL: { return (std::string)(*other.GetBool() ? "true" : "false"); } break;
+            case VALUE_ID: { return *other.GetId() ; } break;
         }
         return "";
     }
@@ -785,6 +841,10 @@ class Program {
 private:
     std::vector<u8> stream;
 public:
+    auto data() {
+        return stream.data();
+    }
+
     auto begin() {
         return stream.begin();
     }
@@ -2631,7 +2691,7 @@ private:
 
 	Stack<Value> stack;
     Stack<u64> callStack;
-    Stack<u64> deferstack;
+    Stack<Program> deferstack;
 
     std::map<std::string,u64> jumpTable;
 
@@ -3136,13 +3196,15 @@ public:
             case OPCODE_START_DEFER:
             {
                 Value size = decodeConstant();
-                deferstack.push(pc);
+                auto subprogram = program.subprogram(pc, *size.GetInt());
+                deferstack.push(subprogram);
                 pc += *size.GetInt();
             } break;
             case OPCODE_EXEC_DEFER:
             {
                 if(!deferstack.empty()) {
                     stack.pop();
+
                 }
             } break;
 
@@ -3468,7 +3530,7 @@ struct BytecodeEmitter : NodeVisitor
         program.push(OPCODE_JUMP);
         u64 jumpLoc = 0;
         program.push(Value((i64)0));
-        program.replace(deferLoc, Value((i64)program.size() - deferLoc));
+        program.replace(deferLoc, Value((i64)(program.size() - deferLoc)));
     }
 };
 
@@ -3493,6 +3555,15 @@ std::string LoadEntireFileIntoString(std::string path) {
 	return buffer.str();
 }
 
+void WriteProgramToFile(std::string path, Program program) {
+    std::ofstream out(path, std::ios::binary);
+
+    size_t progsize = program.size();
+    u8* data = program.data();
+    out.write(reinterpret_cast<char*>(&progsize), sizeof progsize);
+    out.write(reinterpret_cast<char*>(&data), sizeof(data) * program.size());
+}
+
 int main() {
 	auto source = LoadEntireFileIntoString("test.code");
 
@@ -3510,6 +3581,8 @@ int main() {
         BytecodeEmitter bce;
         parser.tree->visit(&bce);
 		if (error) return 1;
+
+        WriteProgramToFile("test.kasm", bce.program);
 
         VirtualMachine vm(bce.program);
 		if (error) return 1;

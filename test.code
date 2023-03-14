@@ -1,82 +1,11 @@
-func factorial(n : int) : int {
-    if n == 0 { return 0; }
-    if n == 1 { return 1; }
-    return n * factorial(n - 1);
-}
-number := factorial(5);
+name := 25;
 
-alive : bool = true;
-inferedAlive := true;
-
-func add_three(n1 : int, n2 : int, n3 : int) : int {
-    return n1 + n2 + n3;
+func double(n : int) : int {
+	return n * 2;
 }
 
-number_two := add_three(3, 2, 1);
+name = double(name);
 
-if 5 == 2 {
-    n_one := add_three(7,8,9);
-} else {
-    n_two := add_three(number_two, number, 6);
+for i := 0, i < 25, i += 1 {
+	name += 2;
 }
-
-fourteen := factorial(7);
-
-/* TODO: Also brokey
-func fibonacci(n : int) : int {
-	 if n == 0 || n == 1 { return n; }
-	 return fibonacci(n-1) + fibonacci(n-2);
-}
-
-fib := fibonacci(2);
-*/
-
-f := 5.6;
-defer f += 25;
-f = f * 2.5;
-f = f + 2.71235;
-
-name := "hello"; // TODO: String's broke in the VM.
-
-
-/*
-func add(T: type, a : T, b : T) : T {
-    return a + b;
-}
-*/
-
-/*
-// ------------------------
-// --- array's / list's ---
-// ------------------------
-
-fixed_array : [string, 5] = ["james", "roisin", "ewan", "natasha", "dylan"];
-infered_fixed_array := ["james", "roisin", "ewan", "natasha", "dylan"]; list : [string, ...];
-
-for int i = 0, i < len(list), i += 1 {
-    name := at(list, i);
-    println(name);
-}
-
-// --------------------------------
-// --- manual memory management ---
-// --------------------------------
-
-typed_pointer : ptr int = alloc 527;
-free typed_pointer;
-
-infered_pointer := alloc 237;
-free infered_pointer;
-
-local := 25;
-ptr_to_local := ref local
-deref ptr_to_lcal += 5; // "local" now equals "30"
-
-func double(num : ptr int) {
-    deref num *= 2;
-}
-
-value := 5;
-double(value); // "value" now equals "10"
-
-*/
