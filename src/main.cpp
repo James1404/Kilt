@@ -260,7 +260,7 @@ public:
         : allocated(other.allocated), used(other.used)
     {
         allocate(allocated);
-        memcpy(&data, &other.data, used); // TODO: Fix this its stupid probably
+        memcpy(&data, &other.data, used); // TODO: Fix this its probably stupid
     }
     /*
     void push(Value* v) {
