@@ -3867,7 +3867,7 @@ void WriteProgramToFile(std::string path, Program program) {
     size_t progsize = program.size();
     u8* data = program.data();
     out.write(reinterpret_cast<char*>(&progsize), sizeof progsize);
-    out.write(reinterpret_cast<char*>(&data), sizeof(data) * program.size());
+    out.write(reinterpret_cast<char*>(&data), sizeof(u8) * program.size());
 }
 
 int CompileSourceFile(std::string path) {
@@ -3901,7 +3901,7 @@ int CompileSourceFile(std::string path) {
         // number : float = 25;
         //                   ^ this should be casted to a float
         // NOTE: Actually this might not have to be.
-        // TODO: Think about explicit casting for e.g. (cast float)25
+        // TODO: Think about explicit casting for e.g. cast(25, float)
 
         // TODO: Make type's an explicit value;
 
@@ -3921,6 +3921,14 @@ int CompileSourceFile(std::string path) {
     }
 }
 
-int main() {
-	return CompileSourceFile("test.kilt");
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; i++) {
+        std::string in = argv[i];
+
+        if (in == "-o") {
+
+        }
+    }
+
+    return CompileSourceFile("test.kilt");
 }
