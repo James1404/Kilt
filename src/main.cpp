@@ -180,7 +180,7 @@ enum IntegerSizes : u8 {
 class Value;
 
 // TODO: Turn this into a full class with more complex type's like functions with arg's and return types.
-enum ValueType : u8 {
+enum ValueType : u8 { 
     VALUE_NONE = 0x00,
 
     VALUE_ARRAY,
@@ -439,6 +439,22 @@ public:
     bool* GetBool() const { return static_cast<bool*>(data); }
     std::string* GetId() const { return static_cast<std::string*>(data); }
     PtrValue* GetPtr() const { return static_cast<PtrValue*>(data); }
+
+    u64 GetSize() const {
+        u64 r = 0;
+        switch (type) {
+        case VALUE_INT: r = sizeof(u64); break;
+        case VALUE_REAL: r = sizeof(double); break;
+        case VALUE_BOOL: r = sizeof(bool); break;
+        case VALUE_STR: r = sizeof(char) * GetStr()->size(); break;
+        case VALUE_ID: r = sizeof(char) * GetId()->size(); break;
+        default:
+        {
+            LogError("Cannot get size of type: \"" + std::to_string(type) + "\"");
+        }break;
+        }
+        return r;
+    }
 
     void Negative()
     {
@@ -1183,6 +1199,8 @@ struct SequenceNode;
 struct BinaryNode;
 struct ValueNode;
 struct VariableDeclNode;
+struct ArrayDeclNode;
+struct PtrDeclNode;
 struct AssignmentNode;
 struct FunctionNode;
 struct CallNode;
@@ -1194,6 +1212,10 @@ struct BreakNode;
 struct ContinueNode;
 struct DeferNode;
 struct ImportNode;
+struct AllocNode;
+struct FreeNode;
+struct RefNode;
+struct DerefNode;
 
 struct NodeVisitor
 {
@@ -1202,6 +1224,8 @@ struct NodeVisitor
 	virtual void visit(BinaryNode* node) = 0;
 	virtual void visit(ValueNode* node) = 0;
 	virtual void visit(VariableDeclNode* node) = 0;
+    virtual void visit(ArrayDeclNode* node) = 0;
+    virtual void visit(PtrDeclNode* node) = 0;
 	virtual void visit(AssignmentNode* node) = 0;
 	virtual void visit(FunctionNode* node) = 0;
 	virtual void visit(CallNode* node) = 0;
@@ -1213,6 +1237,10 @@ struct NodeVisitor
 	virtual void visit(ContinueNode* node) = 0;
 	virtual void visit(DeferNode* node) = 0;
     virtual void visit(ImportNode* node) = 0;
+    virtual void visit(AllocNode* node) = 0;
+    virtual void visit(FreeNode* node) = 0;
+    virtual void visit(RefNode* node) = 0;
+    virtual void visit(DerefNode* node) = 0;
 };
 
 #define PRINT_FREED_MEMORY false
@@ -1288,10 +1316,8 @@ struct VariableDeclNode : Node
     Node* value;
     bool infer;
 
-    bool is_array = false;
-
 	VariableDeclNode(Token id_, Token type_, Node* value_ = NULL, bool is_array_ = false)
-		: id(id_), type(type_), value(value_), infer(false), is_array(is_array_)
+		: id(id_), type(type_), value(value_), infer(false)
 	{}
 
 	VariableDeclNode(Token id_, Node* value_ = NULL)
@@ -1299,6 +1325,32 @@ struct VariableDeclNode : Node
 	{}
     
 	VISIT_
+};
+
+struct ArrayDeclNode : Node {
+    Token id, type;
+    Node* size, *value;
+    bool infer;
+
+    ArrayDeclNode(Token id_, Token type_, Node* size_, Node* value_ = NULL)
+        : id(id_), type(type_), size(size_), value(value_), infer(false)
+    {}
+
+    ArrayDeclNode(Token id_, Node* value_ = NULL)
+        : id(id_), type(), size(), value(value_), infer(true)
+    {}
+
+    VISIT_
+};
+
+struct PtrDeclNode : Node {
+    Token id, type;
+
+    PtrDeclNode(Token id_, Token type_)
+        : id(id_), type(type_)
+    {}
+
+    VISIT_
 };
 
 struct AssignmentNode : Node
@@ -1416,6 +1468,35 @@ struct ImportNode : Node {
     Node* path;
 
     ImportNode(Token file_, Node* path_) : file(file_), path(path_) {}
+    VISIT_
+};
+
+struct AllocNode : Node {
+    Token type;
+
+    AllocNode(Token type_) : type(type_) {}
+
+    VISIT_
+};
+
+struct FreeNode : Node {
+    Token id;
+
+    FreeNode(Token id_) : id(id_) {}
+    VISIT_
+};
+
+struct RefNode : Node {
+    Token id;
+
+    RefNode(Token id_) : id(id_) {}
+    VISIT_
+};
+
+struct DerefNode : Node {
+    Token id;
+
+    DerefNode(Token id_) : id(id_) {}
     VISIT_
 };
 
@@ -1656,6 +1737,13 @@ struct Parser
                 }
             }
         }
+        else if (AdvanceIfMatch(TOKEN_FREE)) {
+            if (Token id = current; AdvanceIfMatch(TOKEN_IDENTIFIER)) {
+                if (AdvanceIfMatch(TOKEN_SEMICOLON)) {
+                    return new FreeNode(id);
+                }
+            }
+        }
 
         if(Node* n = VariableDecleration(); n != NULL)
         {
@@ -1704,6 +1792,12 @@ struct Parser
             if(peek().type == TOKEN_COLON)
             {
                 advance(2);
+
+                bool is_ptr = false;
+                if (current.type == TOKEN_PTR) {
+                    is_ptr = true;
+                    advance();
+                }
 
                 if(current.type == TOKEN_IDENTIFIER)
                 {
@@ -1995,6 +2089,27 @@ struct Parser
                 return new ValueNode(t, VALUE_ARRAY);
             }
         }
+        else if (AdvanceIfMatch(TOKEN_ALLOC)) {
+            t = current;
+            if (AdvanceIfMatch(TOKEN_LITERAL))
+            {
+                return new ValueNode(t);
+            }
+        }
+        else if (AdvanceIfMatch(TOKEN_REF)) {
+            t = current;
+            if (AdvanceIfMatch(TOKEN_LITERAL))
+            {
+                return new RefNode(t);
+            }
+        }
+        else if (AdvanceIfMatch(TOKEN_DEREF)) {
+            t = current;
+            if (AdvanceIfMatch(TOKEN_LITERAL))
+            {
+                return new DerefNode(t);
+            }
+        }
 
         return NULL;
 	}
@@ -2205,24 +2320,12 @@ public:
 
             if(node->value != NULL)
             {
-                if(node->is_array) {
-                    node->value->visit(this);
-                    Value arraysizetype = stack.top(); stack.pop();
-                    if(!arraysizetype.IsInt()) {
-                        LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
-                        return;
-                    }
-
-                    vartype = VALUE_ARRAY;
-                }
-                else {
-                    node->value->visit(this);
-                    Value valuetype = stack.top(); stack.pop();
-                    if(!CompareValueTypes(vartype, valuetype))
-                    {
-                        LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
-                        return;
-                    }
+                node->value->visit(this);
+                Value valuetype = stack.top(); stack.pop();
+                if(!CompareValueTypes(vartype, valuetype))
+                {
+                    LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
+                    return;
                 }
             }
         }
@@ -2230,6 +2333,82 @@ public:
         current->SetType(node->id.text, vartype);
         if(is_arg) stack.push(vartype);
 	}
+
+    void visit(ArrayDeclNode* node)
+    {
+        if (current->VariableExists(node->id.text)) {
+            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
+            return;
+        }
+
+        ValueType vartype = VALUE_NONE;
+        if (node->infer) {
+            node->value->visit(this);
+            Value value = stack.top(); stack.pop();
+            vartype = value.GetType();
+        }
+        else {
+            vartype = StringToValueType(node->type.text);
+            if (vartype == VALUE_NONE) {
+                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
+                return;
+            }
+
+            if (node->value != NULL)
+            {
+                node->value->visit(this);
+                Value arraysizetype = stack.top(); stack.pop();
+                if (!arraysizetype.IsInt()) {
+                    LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
+                    return;
+                }
+
+                vartype = VALUE_ARRAY;
+            }
+        }
+
+        current->SetType(node->id.text, vartype);
+        if (is_arg) stack.push(vartype);
+    }
+
+    void visit(PtrDeclNode* node) {
+        if (current->VariableExists(node->id.text)) {
+            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
+            return;
+        }
+
+        ValueType vartype = VALUE_NONE;
+        vartype = VALUE_PTR;
+        /*
+        if (node->infer) {
+            node->value->visit(this);
+            Value value = stack.top(); stack.pop();
+            vartype = value.GetType();
+        }
+        else {
+            vartype = StringToValueType(node->type.text);
+            if (vartype == VALUE_NONE) {
+                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
+                return;
+            }
+
+            if (node->value != NULL)
+            {
+                node->value->visit(this);
+                Value arraysizetype = stack.top(); stack.pop();
+                if (!arraysizetype.IsInt()) {
+                    LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
+                    return;
+                }
+
+                vartype = VALUE_ARRAY;
+            }
+        }
+        */
+
+        current->SetType(node->id.text, vartype);
+        if (is_arg) stack.push(vartype);
+    }
 
 	void visit(AssignmentNode* node)
 	{
@@ -2406,6 +2585,35 @@ public:
             return;
         }
     }
+
+    void visit(AllocNode* node) {
+        // TODO: Allow manually input byte size.
+        if (current->FindType(node->type.text) != VALUE_NONE) {
+            LogError("Cannot allocate a type that doesn't exist: \"" + node->type.text + "\"", node->type.line, node->type.location);
+            return;
+        }
+    }
+
+    void visit(FreeNode* node) {
+        if (current->VariableExists(node->id.text)) {
+            LogError("Cannot free a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            return;
+        }
+    }
+
+    void visit(RefNode* node) {
+        if (current->VariableExists(node->id.text)) {
+            LogError("Cannot get a reference to a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            return;
+        }
+    }
+
+    void visit(DerefNode* node) {
+        if (current->VariableExists(node->id.text)) {
+            LogError("Cannot dereference a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            return;
+        }
+    }
 };
 
 struct NodeFreeVisitor : NodeVisitor {
@@ -2442,6 +2650,19 @@ struct NodeFreeVisitor : NodeVisitor {
             node->value->visit(this);
             delete node->value;
         }
+    }
+
+    void visit(ArrayDeclNode* node)
+    {
+        if (node->value != NULL)
+        {
+            node->value->visit(this);
+            delete node->value;
+        }
+    }
+
+    void visit(PtrDeclNode* node)
+    {
     }
 
 	void visit(AssignmentNode* node)
@@ -2519,6 +2740,11 @@ struct NodeFreeVisitor : NodeVisitor {
     {
         delete node->path;
     }
+
+    void visit(AllocNode* node) {}
+    void visit(FreeNode* node) {}
+    void visit(RefNode* node) {}
+    void visit(DerefNode* node) {}
 };
 
 enum OpCodeType : u8
@@ -3415,29 +3641,29 @@ struct BytecodeEmitter : NodeVisitor
 
 	void visit(VariableDeclNode* node)
 	{
-        if(node->is_array)
+        if (node->value != NULL)
         {
             node->value->visit(this);
-            program.push(OPCODE_STORE_ARRAY);
-            program.push(Value(node->id.text));
         }
         else
         {
-            if(node->value != NULL)
-            {
-                node->value->visit(this);
-            }
-            else
-            {
-                program.push(OPCODE_PUSH);
-                program.push(Value((i64)0));
-            }
-
-            program.push(OPCODE_STORE);
-            program.push(Value(node->id.text));
-            previous_id = node->id.text;
+            program.push(OPCODE_PUSH);
+            program.push(Value((i64)0));
         }
+
+        program.push(OPCODE_STORE);
+        program.push(Value(node->id.text));
+        previous_id = node->id.text;
 	}
+
+    void visit(ArrayDeclNode* node) {
+        node->value->visit(this);
+        program.push(OPCODE_STORE_ARRAY);
+        program.push(Value(node->id.text));
+    }
+
+    void visit(PtrDeclNode* node) {
+    }
 
 	void visit(AssignmentNode* node)
 	{
@@ -3588,8 +3814,29 @@ struct BytecodeEmitter : NodeVisitor
         program.replace(deferLoc, Value((i64)(program.size() - deferLoc)));
     }
 
-    void visit(ImportNode* node)
-    {
+    void visit(ImportNode* node) {
+    }
+
+    void visit(AllocNode* node) {
+        program.push(OPCODE_ALLOC);
+
+        // TODO: Get size of type;
+
+        Value v = node->type.text; // TODO: This wont work it will be interpreted as an ID
+        program.push(Value((i64)v.GetSize()));
+    }
+
+    void visit(FreeNode* node) {
+        program.push(OPCODE_FREE);
+        program.push(Value(node->id.text));
+    }
+
+    void visit(RefNode* node) {
+        // TODO: Implement this
+    }
+
+    void visit(DerefNode* node) {
+        // TODO: Implement this
     }
 };
 
@@ -3675,5 +3922,5 @@ int CompileSourceFile(std::string path) {
 }
 
 int main() {
-	return CompileSourceFile("test.code");
+	return CompileSourceFile("test.kilt");
 }
