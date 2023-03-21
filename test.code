@@ -1,11 +1,18 @@
+//import "test.code";
+
 name := 25;
 
 func double(n : int) : int {
 	return n * 2;
 }
 
-name = double(name);
+func main() {
+	name = double(name);
+	defer name += 2;
 
-for i := 0, i < 25, i += 1 {
-	name += 2;
+	for i := 0, i < 25, i += 1 {
+		name += 2;
+	}
 }
+
+main();

@@ -121,7 +121,7 @@ enum TokenType
 
     TOKEN_LIST, // list is "..."
 
-    TOKEN_DEFER,
+    TOKEN_DEFER, TOKEN_IMPORT,
 };
 
 struct Token
@@ -167,6 +167,7 @@ std::map<std::string, TokenType> keywords = {
     { "...", TOKEN_LIST },
 
     { "defer", TOKEN_DEFER },
+    { "import", TOKEN_IMPORT },
 };
 
 enum IntegerSizes : u8 {
@@ -219,6 +220,10 @@ public:
         }
         return 0;
     }
+
+    void Assign(Value* v) {
+        // TODO: Figure this out?????
+    }
 };
 
 class ArrayValue {
@@ -230,20 +235,7 @@ private:
 
     ValueType type;
 
-    void allocate(size_t size) {
-        /*
-        if (data == NULL) {
-            data = (Value*)malloc(sizeof(Value) * size);
-        }
-        else {
-            Value* temp = data;
-            data = (Value*)malloc(sizeof(Value) * size);
-            memcpy(temp, data, allocated);
-            delete[] temp;
-        }
-        allocated = size;
-        */
-    }
+    void allocate(size_t size);
 public:
     ArrayValue(ValueType type_, size_t size = -1)
         : type(type_)
@@ -262,43 +254,15 @@ public:
         allocate(allocated);
         memcpy(&data, &other.data, used); // TODO: Fix this its probably stupid
     }
-    /*
-    void push(Value* v) {
-        assert(v->GetType() == type);
 
-        if (used >= allocated) {
-            allocate(allocated * 2);
-        }
-
-        data[used++] = *v;
-    }
-
-    void erase(u64 idx) {
-        assert(idx <= used);
-        memmove(&data[idx], &data[idx + 1], used - idx); // TODO: Confirm this works
-        used--;
-    }
-
-    ArrayValue slice(u64 start, u64 end) {
-        assert(start < end);
-        assert(end <= used);
-
-        u64 size = end - start;
-
-        ArrayValue result(type, size);
-        memcpy(result.data, &data[start], size);
-
-        return result;
-    }
-
-    Value* at(u64 idx) {
-        assert(idx <= used);
-        return &data[idx];
-    }
+    void push(Value v);
+    void erase(u64 idx);
+    ArrayValue slice(u64 start, u64 end);
+    Value at(u64 idx);
 
     size_t size() const {
         return used;
-    }*/
+    }
 };
 
 namespace std {
@@ -818,6 +782,52 @@ namespace std {
     }
 }
 
+void ArrayValue::allocate(size_t size) {
+    if (data == NULL) {
+        data = (Value*)malloc(sizeof(Value) * size);
+    }
+    else {
+        Value* temp = data;
+        data = (Value*)malloc(sizeof(Value) * size);
+        memcpy(temp, data, allocated);
+        delete[] temp;
+    }
+    allocated = size;
+}
+
+void ArrayValue::push(Value v) {
+    assert(v.GetType() == type);
+
+    if (used >= allocated) {
+        allocate(allocated * 2);
+    }
+
+    data[used++] = v;
+}
+
+void ArrayValue::erase(u64 idx) {
+    assert(idx <= used);
+    memmove(&data[idx], &data[idx + 1], used - idx); // TODO: Confirm this works
+    used--;
+}
+
+Value ArrayValue::at(u64 idx) {
+    assert(idx <= used);
+    return &data[idx];
+}
+
+ArrayValue ArrayValue::slice(u64 start, u64 end) {
+    assert(start < end);
+    assert(end <= used);
+
+    u64 size = end - start;
+
+    ArrayValue result(type, size);
+    memcpy(result.data, &data[start], size);
+
+    return result;
+}
+
 bool CompareValueTypes(Value l, Value r)
 {
     return l.GetType() == r.GetType();
@@ -839,19 +849,12 @@ Program ToProgram(Value v);
 
 class Program {
 private:
-    std::vector<u8> stream;
+    using Stream = std::vector<u8>;
+    Stream stream;
 public:
-    auto data() {
-        return stream.data();
-    }
-
-    auto begin() {
-        return stream.begin();
-    }
-
-    auto end() {
-        return stream.end();
-    }
+    auto data() { return stream.data(); }
+    auto begin() { return stream.begin(); }
+    auto end() { return stream.end(); }
 
     void push(u8 byte) {
         stream.push_back(byte);
@@ -884,7 +887,9 @@ public:
     }
 
     Program subprogram(u64 start, u64 size) {
-        return{};
+        Program result;
+        result.stream = Stream(stream.begin() + start, stream.begin() + start + size);
+        return result;
     }
 };
 
@@ -1188,6 +1193,7 @@ struct ReturnNode;
 struct BreakNode;
 struct ContinueNode;
 struct DeferNode;
+struct ImportNode;
 
 struct NodeVisitor
 {
@@ -1206,6 +1212,7 @@ struct NodeVisitor
 	virtual void visit(BreakNode* node) = 0;
 	virtual void visit(ContinueNode* node) = 0;
 	virtual void visit(DeferNode* node) = 0;
+    virtual void visit(ImportNode* node) = 0;
 };
 
 #define PRINT_FREED_MEMORY false
@@ -1404,6 +1411,14 @@ struct DeferNode : Node {
     VISIT_
 };
 
+struct ImportNode : Node {
+    Token file;
+    Node* path;
+
+    ImportNode(Token file_, Node* path_) : file(file_), path(path_) {}
+    VISIT_
+};
+
 std::map<TokenType, int> operatorprecendence =
 {
     { TOKEN_AND, 0 },
@@ -1470,7 +1485,7 @@ struct Parser
 		: stream(input)
 	{
         current = stream.at(0);
-		tree = StatementList();
+		tree = new ScopeNode(StatementList());
 	}
 
 	Node* StatementList()
@@ -1631,6 +1646,14 @@ struct Parser
             else
             {
                 LogError("Defer statement must have a valid statement", current.line, current.location);
+            }
+        }
+        else if (AdvanceIfMatch(TOKEN_IMPORT)) {
+            Token file = current;
+            if (Node* v = Literal(); v != NULL) {
+                if (AdvanceIfMatch(TOKEN_SEMICOLON)) {
+                    return new ImportNode(file, v);
+                }
             }
         }
 
@@ -2052,8 +2075,12 @@ private:
     bool got_return = false;
     bool in_loop = false;
     bool in_func = false;
+
+    std::string sourcepath;
 public:
-    TypeChecker() {
+    TypeChecker(std::string sourcepath_)
+        : sourcepath(sourcepath_)
+    {
         current = &global;
     }
 
@@ -2353,10 +2380,35 @@ public:
 	void visit(DeferNode* node)
     {
     }
+
+    void visit(ImportNode* node) {
+        node->path->visit(this);
+        Value filePath = stack.top(); stack.pop();
+
+        if (!filePath.IsStr()) {
+            LogError("Import statement must be provided a string", node->file.line, node->file.location);
+            return;
+        }
+
+        std::filesystem::path path(*filePath.GetStr());
+        if (!std::filesystem::exists(path)) {
+            LogError("Import statement path points to a file that does not exist", node->file.line, node->file.location);
+            return;
+        }
+
+        if (std::filesystem::is_directory(path)) {
+            LogError("Import statement path cannot be a directory, it must be a file", node->file.line, node->file.location);
+            return;
+        }
+
+        if (path == sourcepath) {
+            LogError("Cannot import file within itself", node->file.line, node->file.location);
+            return;
+        }
+    }
 };
 
-struct NodeFreeVisitor : NodeVisitor
-{
+struct NodeFreeVisitor : NodeVisitor {
 	void visit(ScopeNode* node)
     {
         node->statement->visit(this);
@@ -2461,6 +2513,11 @@ struct NodeFreeVisitor : NodeVisitor
     {
         node->stat->visit(this);
         delete node->stat;
+    }
+
+    void visit(ImportNode* node) 
+    {
+        delete node->path;
     }
 };
 
@@ -2608,12 +2665,6 @@ struct Environment
 	}
 };
 
-#define VM_BINARY_OP(type, l, op, r)\
-    {\
-        Value result = l.Get##type() op r.Get##type();\
-        stack.push(result);\
-    }
-
 class MemoryArena {
 private:
    u8* mem = NULL;
@@ -2636,7 +2687,6 @@ private:
        }
        mem = newMem;
    }
-
 public:
    MemoryArena() {
        allocated = defaultSize;
@@ -2645,6 +2695,11 @@ public:
 
    ~MemoryArena() {
        delete[] mem;
+   }
+
+   template<typename T>
+   T* Alloc() {
+       return static_cast<T*>(Alloc(sizeof(T)));
    }
 
    u8* Alloc(u64 size) {
@@ -2687,8 +2742,6 @@ public:
 class VirtualMachine
 {
 private:
-    u64 pc = 0;
-
 	Stack<Value> stack;
     Stack<u64> callStack;
     Stack<Program> deferstack;
@@ -2697,17 +2750,17 @@ private:
 
 	Environment env;
     MemoryArena memory;
-
-    Program program;
 public:
-    VirtualMachine(Program p_)
-        : program(p_)
+    VirtualMachine(Program& p)
     {
-        PrintProgram();
+        PrintProgram(p);
+        RunProgram(p);
+    }
 
-        for(pc = 0;pc < program.size();)
+    void RunProgram(Program& p) {
+        for (u64 pc = 0; pc < p.size();)
         {
-            exec();
+            exec(p, pc);
         }
     }
 
@@ -2740,10 +2793,10 @@ public:
         std::cout << "\n";
     }
 
-    u8 GetByte() { return program.at(pc++); }
+    u8 GetByte(Program& p, u64& pc) { return p.at(pc++); }
 
-    Value decodeConstant() {
-        u8 type = GetByte();
+    Value decodeConstant(Program& p, u64& pc) {
+        u8 type = GetByte(p, pc);
         switch(type) {
             case VALUE_ARRAY:
             {
@@ -2751,7 +2804,7 @@ public:
             } break;
             case VALUE_INT:
             {
-                u8 properties = GetByte();
+                u8 properties = GetByte(p, pc);
 
                 u8 size = properties & 0b00000011;
                 u8 sign = (properties >> 2) & 0b00000001;
@@ -2770,14 +2823,14 @@ public:
                     case INTEGER_64BIT:
                     {
                         u8 bytes8[8] = {
-                            GetByte(),
-                            GetByte(),
-                            GetByte(),
-                            GetByte(),
-                            GetByte(),
-                            GetByte(),
-                            GetByte(),
-                            GetByte()
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc)
                         };
 
                         u16 bytes16[4] = {
@@ -2801,14 +2854,14 @@ public:
             case VALUE_REAL:
             {
                 u8 bytes8[8] = {
-                    GetByte(),
-                    GetByte(),
-                    GetByte(),
-                    GetByte(),
-                    GetByte(),
-                    GetByte(),
-                    GetByte(),
-                    GetByte()
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc),
+                    GetByte(p, pc)
                 };
 
                 u16 bytes16[4] = {
@@ -2829,24 +2882,24 @@ public:
             } break;
             case VALUE_BOOL:
             {
-                return Value((bool)GetByte());
+                return Value((bool)GetByte(p, pc));
             } break;
             case VALUE_STR:
             {
-                Value size = decodeConstant();
+                Value size = decodeConstant(p, pc);
                 std::string str;
                 for(int i = 0; i < *size.GetInt(); i++) {
-                    str.append(1, GetByte());
+                    str.append(1, GetByte(p, pc));
                 }
 
                 return Value((ValueType)type, str);
             } break;
             case VALUE_ID:
             {
-                Value size = decodeConstant();
+                Value size = decodeConstant(p, pc);
                 std::string id;
                 for(int i = 0; i < *size.GetInt(); i++) {
-                    id.append(1, GetByte());
+                    id.append(1, GetByte(p, pc));
                 }
 
                 return Value((ValueType)type, id);
@@ -2861,14 +2914,14 @@ public:
         return{};
     }
 
-	void exec()
+	void exec(Program& p, u64& pc)
 	{
-        u8 opcode = GetByte();
+        u8 opcode = GetByte(p, pc);
         switch (opcode)
         {
             case OPCODE_PUSH:
             {
-                stack.push(decodeConstant());
+                stack.push(decodeConstant(p, pc));
             } break;
             case OPCODE_POP:
             {
@@ -2880,7 +2933,7 @@ public:
                 Value v = stack.top();
                 stack.pop();
 
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 std::string name = *arg.GetId();
 
                 auto id = env.FindIdentifier(name);
@@ -2894,7 +2947,7 @@ public:
             } break;
             case OPCODE_LOAD:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 std::string name = *arg.GetId();
                 auto id = env.FindIdentifier(name);
                 if (id)
@@ -2905,12 +2958,12 @@ public:
 
             case OPCODE_JUMP:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 pc = *arg.GetInt();
             } break;
             case OPCODE_JUMP_IF_TRUE:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 Value v = stack.top(); stack.pop();
                 if(v.IsBool()) {
                     if(*v.GetBool())
@@ -2921,7 +2974,7 @@ public:
             } break;
             case OPCODE_JUMP_IF_FALSE:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 Value v = stack.top(); stack.pop();
                 if(v.IsBool()) {
                     if(!*v.GetBool())
@@ -2933,14 +2986,14 @@ public:
 
             case OPCODE_START_SUBROUTINE:
             {
-                Value id = decodeConstant();
-                Value skip = decodeConstant();
+                Value id = decodeConstant(p, pc);
+                Value skip = decodeConstant(p, pc);
                 jumpTable.emplace(*id.GetId(), pc);
                 pc = *skip.GetInt();
             } break;
             case OPCODE_JUMP_SUBROUTINE:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 auto it = jumpTable.find(*arg.GetId());
                 if(it != jumpTable.end())
                 {
@@ -3141,7 +3194,7 @@ public:
 
             case OPCODE_STORE_ARRAY:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 Value size = stack.top(); stack.pop();
 
                 std::string name = *arg.GetId();
@@ -3159,14 +3212,14 @@ public:
             } break;
             case OPCODE_STORE_ARRAY_INDEX:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 Value idx = stack.top(); stack.pop();
 
                 std::string name = *arg.GetId();
             } break;
             case OPCODE_LOAD_ARRAY_INDEX:
             {
-                Value arg = decodeConstant();
+                Value arg = decodeConstant(p, pc);
                 Value idx = stack.top(); stack.pop();
 
                 std::string name = *arg.GetId();
@@ -3174,37 +3227,38 @@ public:
 
             case OPCODE_STORE_PTR:
             {
-                Value loc = decodeConstant();
+                Value loc = decodeConstant(p, pc);
             } break;
             case OPCODE_LOAD_PTR:
             {
-                Value loc = decodeConstant();
+                Value loc = decodeConstant(p, pc);
             } break;
             case OPCODE_ALLOC:
             {
-                Value size = decodeConstant();
+                Value size = decodeConstant(p, pc);
 
                 Value ptr = memory.Alloc(*size.GetInt());
                 stack.push(ptr);
             } break;
             case OPCODE_FREE:
             {
-                Value v = decodeConstant();
+                Value v = decodeConstant(p, pc);
                 memory.Free(*v.GetPtr());
             } break;
 
             case OPCODE_START_DEFER:
             {
-                Value size = decodeConstant();
-                auto subprogram = program.subprogram(pc, *size.GetInt());
+                u64 current_pc = pc;
+                Value size = decodeConstant(p, pc);
+                auto subprogram = p.subprogram(pc, *size.GetInt() - (pc - current_pc));
                 deferstack.push(subprogram);
-                pc += *size.GetInt();
+                pc = current_pc + *size.GetInt();
             } break;
             case OPCODE_EXEC_DEFER:
             {
                 if(!deferstack.empty()) {
-                    stack.pop();
-
+                    Program s = deferstack.top(); deferstack.pop();
+                    RunProgram(s);
                 }
             } break;
 
@@ -3215,19 +3269,19 @@ public:
         }
 	}
     
-    void PrintProgram() {
-        pc = 0;
+    void PrintProgram(Program& p) {
+        u64 pc = 0;
 
-        u64 programsize = sizeof(program) + (sizeof(program.at(0)) * program.size());
+        u64 programsize = sizeof(p) + (sizeof(p.at(0)) * p.size());
         std::cout << " --- Bytecode Program, Size(bytes): " << programsize << " --- \n";
-        for(int i = 0; pc < program.size(); i++) {
-            std::cout << "# " << PrintOpCode() << '\n';
+        for(u64 i = 0; pc < p.size(); i++) {
+            std::cout << pc << ": " << PrintOpCode(p, pc) << '\n';
         }
     }
 
-    std::string PrintOpCode()
+    std::string PrintOpCode(Program& p, u64& pc)
     {
-        u8 opcode = GetByte();
+        u8 opcode = GetByte(p, pc);
 
         std::string result;
 
@@ -3288,7 +3342,7 @@ public:
                 result += ", ";
             }
 
-            Value arg = decodeConstant();
+            Value arg = decodeConstant(p, pc);
             result += std::to_string(arg);
         }
 
@@ -3303,6 +3357,7 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(ScopeNode* node)
     {
         node->statement->visit(this);
+        program.push(OPCODE_EXEC_DEFER);
     }
 
 	void visit(SequenceNode* node)
@@ -3506,17 +3561,20 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(ReturnNode* node)
     {
         if(node->expr != NULL) node->expr->visit(this);
+        program.push(OPCODE_EXEC_DEFER);
         program.push(OPCODE_RETURN_FROM_SUBROUTINE);
     }
 
 	void visit(BreakNode* node)
     {
+        program.push(OPCODE_EXEC_DEFER);
         program.push(OPCODE_JUMP);
         program.push(Value((i64)breakloc));
     }
 
 	void visit(ContinueNode* node)
     {
+        program.push(OPCODE_EXEC_DEFER);
         program.push(OPCODE_JUMP);
         program.push(Value((i64)loopstart));
     }
@@ -3527,10 +3585,11 @@ struct BytecodeEmitter : NodeVisitor
         u64 deferLoc = program.size();
         program.push(Value((i64)0));
         node->stat->visit(this);
-        program.push(OPCODE_JUMP);
-        u64 jumpLoc = 0;
-        program.push(Value((i64)0));
         program.replace(deferLoc, Value((i64)(program.size() - deferLoc)));
+    }
+
+    void visit(ImportNode* node)
+    {
     }
 };
 
@@ -3564,33 +3623,33 @@ void WriteProgramToFile(std::string path, Program program) {
     out.write(reinterpret_cast<char*>(&data), sizeof(data) * program.size());
 }
 
-int main() {
-	auto source = LoadEntireFileIntoString("test.code");
+int CompileSourceFile(std::string path) {
+    auto source = LoadEntireFileIntoString(path);
 
-	if (!source.empty()) {
-		Lexer lexer(source);
-		if (error) return 1;
+    if (!source.empty()) {
+        Lexer lexer(source);
+        if (error) return 1;
 
-		Parser parser(lexer.stream);
-		if (error) return 1;
-		
-		TypeChecker tcv;
-		parser.tree->visit(&tcv);
-		if (error) return 1;
+        Parser parser(lexer.stream);
+        if (error) return 1;
+
+        TypeChecker tcv(path);
+        parser.tree->visit(&tcv);
+        if (error) return 1;
 
         BytecodeEmitter bce;
         parser.tree->visit(&bce);
-		if (error) return 1;
+        if (error) return 1;
 
         WriteProgramToFile("test.kasm", bce.program);
 
         VirtualMachine vm(bce.program);
-		if (error) return 1;
+        if (error) return 1;
         vm.PrintRestOfStack();
         vm.PrintGlobalSymbolTable();
-		
-		NodeFreeVisitor nfv;
-		parser.tree->visit(&nfv);
+
+        NodeFreeVisitor nfv;
+        parser.tree->visit(&nfv);
         // TODO: Automatic cast int to float if assigning to float e.g.
         // number : float = 25;
         //                   ^ this should be casted to a float
@@ -3609,10 +3668,12 @@ int main() {
         // println(args : any ...)
         // len(list)
         // at(list, idx)
-	}
-	else {
-		LogError("Source is empty");
-	}
+    }
+    else {
+        LogError("Source is empty");
+    }
+}
 
-	return 0;
+int main() {
+	return CompileSourceFile("test.code");
 }
