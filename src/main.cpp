@@ -865,15 +865,6 @@ ArrayValue ArrayValue::slice(u64 start, u64 end) {
     return result;
 }
 
-bool CompareValueTypes(Value l, Value r)
-{
-    if(l.IsPtr() && r.IsInt()) {
-        return true;
-    }
-
-    return l.GetType() == r.GetType();
-}
-
 TokenType GetKeyword(std::string text)
 {
 	auto it = keywords.find(text);
@@ -1224,8 +1215,9 @@ struct SequenceNode;
 struct BinaryNode;
 struct ValueNode;
 struct VariableDeclNode;
-struct ArrayDeclNode;
-struct PtrDeclNode;
+struct DefaultTypeNode;
+struct ArrayTypeNode;
+struct PtrTypeNode;
 struct AssignmentNode;
 struct FunctionNode;
 struct CallNode;
@@ -1249,8 +1241,9 @@ struct NodeVisitor
 	virtual void visit(BinaryNode* node) = 0;
 	virtual void visit(ValueNode* node) = 0;
 	virtual void visit(VariableDeclNode* node) = 0;
-    virtual void visit(ArrayDeclNode* node) = 0;
-    virtual void visit(PtrDeclNode* node) = 0;
+    virtual void visit(DefaultTypeNode* node) = 0;
+    virtual void visit(ArrayTypeNode* node) = 0;
+    virtual void visit(PtrTypeNode* node) = 0;
 	virtual void visit(AssignmentNode* node) = 0;
 	virtual void visit(FunctionNode* node) = 0;
 	virtual void visit(CallNode* node) = 0;
@@ -1337,48 +1330,46 @@ struct ValueNode : Node
 
 struct VariableDeclNode : Node
 {
-	Token id, type;
-    Node* value;
+	Token id;
+    Node* type, *value;
     bool infer;
 
-	VariableDeclNode(Token id_, Token type_, Node* value_ = NULL, bool is_array_ = false)
+	VariableDeclNode(Token id_, Node* type_, Node* value_ = NULL)
 		: id(id_), type(type_), value(value_), infer(false)
 	{}
 
 	VariableDeclNode(Token id_, Node* value_)
-		: id(id_), type(), value(value_), infer(true)
+		: id(id_), type(NULL), value(value_), infer(true)
 	{}
     
 	VISIT_
 };
 
-struct ArrayDeclNode : Node {
-    Token id, type;
-    Node* size, *value;
-    bool infer;
+struct DefaultTypeNode : Node {
+    Token type;
 
-    ArrayDeclNode(Token id_, Token type_, Node* size_, Node* value_ = NULL)
-        : id(id_), type(type_), size(size_), value(value_), infer(false)
-    {}
-
-    ArrayDeclNode(Token id_, Node* value_)
-        : id(id_), type(), size(), value(value_), infer(true)
+    DefaultTypeNode(Token type_)
+        : type(type_)
     {}
 
     VISIT_
 };
 
-struct PtrDeclNode : Node {
-    Token id, type;
-    Node* value;
-    bool infer;
+struct ArrayTypeNode : Node {
+    Node* type, *size;
 
-    PtrDeclNode(Token id_, Token type_, Node* value_ = NULL)
-        : id(id_), type(type_), value(value_), infer(false)
+    ArrayTypeNode(Node* type_, Node* size_)
+        : type(type_), size(size_)
     {}
 
-    PtrDeclNode(Token id_, Node* value_)
-        : id(id_), type(), value(value_), infer(true)
+    VISIT_
+};
+
+struct PtrTypeNode : Node {
+    Node* type;
+
+    PtrTypeNode(Node* type_)
+        : type(type_)
     {}
 
     VISIT_
@@ -1824,95 +1815,23 @@ struct Parser
             {
                 advance(2);
 
-                bool is_ptr = false;
-                if (current.type == TOKEN_PTR) {
-                    is_ptr = true;
-                    advance();
-                }
+                Node* type = Type();
 
-                if(current.type == TOKEN_IDENTIFIER)
+                if(AdvanceIfMatch(TOKEN_EQUAL))
                 {
-                    Token type = current;
-                    advance();
-
-                    if(AdvanceIfMatch(TOKEN_EQUAL))
+                    Node* value = Expression();
+                    if(type != NULL)
                     {
-                        if(Node* value = Expression(); value != NULL)
-                        {
-                            if(is_ptr) {
-                                return new PtrDeclNode(id, type, value);
-                            }
-                            else {
-                                return new VariableDeclNode(id, type, value);
-                            }
-                        }
-                        else
-                        {
-                            LogError("Value assigned to '" + id.text + "' is invalid", id.line, id.location);
-                        }
+                        return new VariableDeclNode(id, type, value);
                     }
                     else
-                    {
-                        if(is_ptr) {
-                            return new PtrDeclNode(id, type);
-                        }
-                        else {
-                            return new VariableDeclNode(id, type);
-                        }
-                    }
-                }
-                else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
-                {
-                    Token type = current;
-                    if(AdvanceIfMatch(TOKEN_IDENTIFIER))
-                    {
-                        if(AdvanceIfMatch(TOKEN_COMMA))
-                        {
-                            Node* size = Expression();
-                            if(size == NULL) {
-                                if(AdvanceIfMatch(TOKEN_LIST))
-                                {
-                                    size = new ValueNode(Token(TOKEN_LITERAL, "-1"));
-                                }
-                                else
-                                {
-                                    LogError("Array size must be a valid expression", id.line, id.location);
-                                }
-                            }
-
-                            if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
-                            {
-                                return new VariableDeclNode(id, type, size, true);
-                            }
-                            else
-                            {
-                                LogError("Array decleration must have a closing bracket", id.line, id.location);
-                            }
-                        }
-                        else
-                        {
-                            LogError("Array decleration requires a comma after the type identifier", id.line, id.location);
-                        }
-                    }
-                    else
-                    {
-                        LogError("Array decleration requires a type identifier", id.line, id.location);
-                    }
-                }
-                else if(AdvanceIfMatch(TOKEN_EQUAL))
-                {
-                    if(Node* value = Expression(); value != NULL)
                     {
                         return new VariableDeclNode(id, value);
-                    }
-                    else
-                    {
-                        LogError("Value assigned to '" + id.text + "' is invalid", id.line, id.location);
                     }
                 }
                 else
                 {
-                    LogError("Variable decleration must have either specify a type of be assigned a value", id.line, id.location);
+                    return new VariableDeclNode(id, type);
                 }
             }
         }
@@ -1966,6 +1885,47 @@ struct Parser
                 {
 
                 }
+            }
+        }
+
+        return NULL;
+    }
+
+    Node* Type() {
+        if(AdvanceIfMatch(TOKEN_PTR)) {
+            Node* type = Type();
+            return new PtrTypeNode(type);
+        }
+        if(AdvanceIfMatch(TOKEN_LEFT_BRACKET)) {
+            Node* type = Type();
+            if(AdvanceIfMatch(TOKEN_COMMA))
+            {
+                Node* size = Expression();
+                if(size == NULL) {
+                    if(AdvanceIfMatch(TOKEN_LIST))
+                    {
+                        size = new ValueNode(Token(TOKEN_LITERAL, "-1"));
+                    }
+                    else
+                    {
+                        LogError("Array size must be a valid expression", type.line, type.location);
+                    }
+                }
+
+                if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
+                {
+                    return new ArrayTypeNode(type, size);
+                }
+                else
+                {
+                    LogError("Array decleration must have a closing bracket", type.line, type.location);
+                }
+            }
+        }
+        else {
+            if(Token type = current; AdvanceIfMatch(TOKEN_IDENTIFIER))
+            {
+                return new DefaultTypeNode(type);
             }
         }
 
@@ -2234,21 +2194,45 @@ private:
     bool in_func = false;
 
     std::string sourcepath;
-public:
-    TypeChecker(std::string sourcepath_)
-        : sourcepath(sourcepath_)
+
+    auto GetFullType()
     {
-        current = &global;
+        std::vector<Value> result;
+        while(stack.top().GetType() == VALUE_PTR ||
+              stack.top().GetType() == VALUE_ARRAY)
+        {
+            result.push_back(stack.top()); stack.pop();
+        }
+        result.push_back(stack.top()); stack.pop();
+        return result;
     }
 
-    ~TypeChecker()
+    bool CompareValueTypes()
     {
-        while(current->parent != NULL)
+        std::vector<Value> rarr = GetFullType();
+        std::vector<Value> larr = GetFullType();
+
+        bool success = true;
+        for(int i = 0; i < larr.size(); i++)
         {
-            DeleteCurrent();
+            Value l = larr.at(i);
+            Value r = rarr.at(i);
+
+            if(l.IsPtr() && r.IsInt()) {
+                break;
+            }
+            else if(l.GetType() == r.GetType()) {
+                continue;
+            }
+            else {
+                success = false;
+            }
+
         }
+
+        return success;
     }
-private:
+
 	void NewCurrent()
 	{
 		if (current == NULL) return;
@@ -2268,6 +2252,20 @@ private:
         delete temp;
 	}
 public:
+    TypeChecker(std::string sourcepath_)
+        : sourcepath(sourcepath_)
+    {
+        current = &global;
+    }
+
+    ~TypeChecker()
+    {
+        while(current->parent != NULL)
+        {
+            DeleteCurrent();
+        }
+    }
+
 	void visit(ScopeNode* node)
     {
         NewCurrent();
@@ -2318,8 +2316,24 @@ public:
                 } break;
             }
         }
+        else if(l.IsStr() && r.IsStr()) {
+            switch(node->op.type)
+            {
+                case TOKEN_MINUS:
+                case TOKEN_DIVIDE:
+                case TOKEN_MULTIPLY:
+                case TOKEN_NOT:
+                case TOKEN_LESS:
+                case TOKEN_GREATER:
+                case TOKEN_LESS_EQUAL:
+                case TOKEN_GREATER_EQUAL:
+                {
+                    LogError("Invalid operator operation on an array", l.GetLine(), l.GetLoc());
+                } break;
+            }
+        }
 
-        if(!CompareValueTypes(l, r))
+        if(!CompareValueTypes())
         {
             LogError("Type '" + l.GetTypeAsString() + "' is incompatible with type '" + r.GetTypeAsString() + "'", l.GetLine(), l.GetLoc());
         }
@@ -2365,6 +2379,8 @@ public:
             vartype = value.GetType();
         }
         else {
+            node->type->visit(this);
+            Value type = 
             vartype = StringToValueType(node->type.text);
             if(vartype == VALUE_NONE) {
                 LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
@@ -2387,80 +2403,20 @@ public:
         if(is_arg) stack.push(vartype);
 	}
 
-    void visit(ArrayDeclNode* node)
+    void visit(DefaultTypeNode* node)
     {
-        if (current->VariableExists(node->id.text)) {
-            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
-            return;
-        }
-
-        ValueType vartype = VALUE_NONE;
-        if (node->infer) {
-            node->value->visit(this);
-            Value value = stack.top(); stack.pop();
-            vartype = value.GetType();
-        }
-        else {
-            vartype = StringToValueType(node->type.text);
-            if (vartype == VALUE_NONE) {
-                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
-                return;
-            }
-
-            if (node->value != NULL)
-            {
-                node->value->visit(this);
-                Value arraysizetype = stack.top(); stack.pop();
-                if (!arraysizetype.IsInt()) {
-                    LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
-                    return;
-                }
-
-                vartype = VALUE_ARRAY;
-            }
-        }
-
-        current->SetType(node->id.text, vartype);
-        if (is_arg) stack.push(vartype);
+        stack.push(StringToValueType(node->type.text));
     }
 
-    void visit(PtrDeclNode* node) {
-        if (current->VariableExists(node->id.text)) {
-            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
-            return;
-        }
+    void visit(ArrayTypeNode* node)
+    {
+        node->type->visit(this);
+        stack.push(VALUE_ARRAY);
+    }
 
-        ValueType vartype = VALUE_NONE;
-        vartype = VALUE_PTR;
-        /*
-        if (node->infer) {
-            node->value->visit(this);
-            Value value = stack.top(); stack.pop();
-            vartype = value.GetType();
-        }
-        else {
-            vartype = StringToValueType(node->type.text);
-            if (vartype == VALUE_NONE) {
-                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
-                return;
-            }
-
-            if (node->value != NULL)
-            {
-                node->value->visit(this);
-                Value arraysizetype = stack.top(); stack.pop();
-                if (!arraysizetype.IsInt()) {
-                    LogError("Array size must be an integer, not an '" + arraysizetype.GetTypeAsString() + "'");
-                    return;
-                }
-
-                vartype = VALUE_ARRAY;
-            }
-        }
-        */
-
-        current->SetType(node->id.text, vartype);
-        if (is_arg) stack.push(vartype);
+    void visit(PtrTypeNode* node) {
+        node->type->visit(this);
+        stack.push(VALUE_PTR);
     }
 
 	void visit(AssignmentNode* node)
@@ -2693,6 +2649,12 @@ struct NodeFreeVisitor : NodeVisitor {
 	void visit(ValueNode* node) {}
 	void visit(VariableDeclNode* node)
     {
+        if(node->type != NULL)
+        {
+            node->type->visit(this);
+            delete node->type;
+        }
+
         if(node->value != NULL)
         {
             node->value->visit(this);
@@ -2700,17 +2662,21 @@ struct NodeFreeVisitor : NodeVisitor {
         }
     }
 
-    void visit(ArrayDeclNode* node)
+    void visit(DefaultTypeNode* node) {}
+
+    void visit(ArrayTypeNode* node)
     {
-        if (node->value != NULL)
-        {
-            node->value->visit(this);
-            delete node->value;
-        }
+        node->type->visit(this);
+        delete node->type;
+
+        node->size->visit(this);
+        delete node->size;
     }
 
-    void visit(PtrDeclNode* node)
+    void visit(PtrTypeNode* node)
     {
+        node->type->visit(this);
+        delete node->type;
     }
 
 	void visit(AssignmentNode* node)
@@ -3315,8 +3281,12 @@ public:
                 }
                 else if(l.IsPtr() && r.IsInt())
                 {
-                    Value result = *l.GetPtr();
-                    result.GetPtr()->ptr += *r.GetInt();
+                    Value result = l.GetPtr()->ptr + *r.GetInt();
+                    stack.push(result);
+                }
+                else if(l.IsStr() && r.IsStr()) {
+                    // TODO: Fix quote's!!!!!
+                    Value result = *l.GetStr() + *r.GetStr();
                     stack.push(result);
                 }
             } break;
@@ -3732,21 +3702,21 @@ struct BytecodeEmitter : NodeVisitor
             program.push(Value((i64)0));
         }
 
-        program.push(OPCODE_STORE);
+        node->type->visit(this);
         program.push(Value(node->id.text));
         previous_id = node->id.text;
 	}
 
-    void visit(ArrayDeclNode* node) {
-        node->value->visit(this);
-        program.push(OPCODE_STORE_ARRAY);
-        program.push(Value(node->id.text));
+    void visit(DefaultTypeNode* node) {
+        program.push(OPCODE_STORE);
     }
 
-    void visit(PtrDeclNode* node) {
-        node->value->visit(this);
+    void visit(ArrayTypeNode* node) {
+        program.push(OPCODE_STORE_ARRAY);
+    }
+
+    void visit(PtrTypeNode* node) {
         program.push(OPCODE_STORE);
-        program.push(Value(node->id.text));
     }
 
 	void visit(AssignmentNode* node)

@@ -1,2 +1,5 @@
 pointer : ptr int = alloc 25;
 free pointer;
+
+name := "hello ";
+name += "james";
