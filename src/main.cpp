@@ -1892,6 +1892,7 @@ struct Parser
     }
 
     Node* Type() {
+        Token id = current;
         if(AdvanceIfMatch(TOKEN_PTR)) {
             Node* type = Type();
             return new PtrTypeNode(type);
@@ -1908,7 +1909,7 @@ struct Parser
                     }
                     else
                     {
-                        LogError("Array size must be a valid expression", type.line, type.location);
+                        LogError("Array size must be a valid expression", id.line, id.location);
                     }
                 }
 
@@ -1918,7 +1919,7 @@ struct Parser
                 }
                 else
                 {
-                    LogError("Array decleration must have a closing bracket", type.line, type.location);
+                    LogError("Array decleration must have a closing bracket", id.line, id.location);
                 }
             }
         }
@@ -2380,8 +2381,7 @@ public:
         }
         else {
             node->type->visit(this);
-            Value type = 
-            vartype = StringToValueType(node->type.text);
+            std::vector<Value> type = GetFullType();
             if(vartype == VALUE_NONE) {
                 LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
                 return;
@@ -2596,6 +2596,8 @@ public:
     }
 
     void visit(AllocNode* node) {
+        node->val->visit(this);
+        stack.push(VALUE_PTR);
     }
 
     void visit(FreeNode* node) {
