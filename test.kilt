@@ -1,5 +1,5 @@
-pointer : ptr int = alloc 25;
-free pointer;
+func double(n : int) : int {
+	return n * 2;
+}
 
-name := "hello ";
-name += "james";
+age: = 17;

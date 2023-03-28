@@ -12,6 +12,7 @@
 #include <sstream>
 #include <cstring>
 #include <cassert>
+#include <functional>
 
 /* --- Language Grammar ---
 <statement> ::= "if" <expression> <statement-block> ("else" <statement-block>)?
@@ -65,15 +66,20 @@ template<typename T>
 class Stack
 {
 private:
-	std::vector<T> data;
+    std::vector<T> data;
 public:
 	bool empty() const { return data.empty(); }
 	size_t size() const { return data.size(); }
 
-	void push(T t) { data.push_back(t); }
-	void pop() { data.pop_back(); }
-	T& top() { return data.back(); }
+	void push(T t) {
+        data.push_back(t);
+    }
 
+	void pop() {
+        data.pop_back();
+    }
+
+	T& top() { return data.back(); }
 	T& at(size_t depth) { return data.at(size() - depth - 1); }
 };
 
@@ -676,6 +682,7 @@ public:
 
     Value& operator=(Token& other)
     {
+        FreeData();
         LinkToken(other);
 
         if(other.type == TOKEN_IDENTIFIER)
@@ -734,7 +741,7 @@ public:
         return *this;
 	}
 
-	Value& operator=(PtrValue other)
+	Value& operator=(PtrValue& other)
 	{
         FreeData();
         type = VALUE_PTR;
@@ -1334,12 +1341,21 @@ struct VariableDeclNode : Node
     Node* type, *value;
     bool infer;
 
+    VariableDeclNode() = default;
+
+    static VariableDeclNode* CreateInferred(Token id_, Node* value_) {
+        VariableDeclNode* result = new VariableDeclNode();
+
+        result->id = id_;
+        result->type = NULL;
+        result->value = value_;
+        result->infer = true;
+
+        return result;
+    }
+
 	VariableDeclNode(Token id_, Node* type_, Node* value_ = NULL)
 		: id(id_), type(type_), value(value_), infer(false)
-	{}
-
-	VariableDeclNode(Token id_, Node* value_)
-		: id(id_), type(NULL), value(value_), infer(true)
 	{}
     
 	VISIT_
@@ -1826,7 +1842,7 @@ struct Parser
                     }
                     else
                     {
-                        return new VariableDeclNode(id, value);
+                        return VariableDeclNode::CreateInferred(id, value);
                     }
                 }
                 else
@@ -2208,7 +2224,7 @@ private:
         return result;
     }
 
-    bool CompareValueTypes()
+    bool CompareValueTypes(std::function<void(std::vector<Value> l, std::vector<Value> r)> error = {})
     {
         std::vector<Value> rarr = GetFullType();
         std::vector<Value> larr = GetFullType();
@@ -2229,6 +2245,10 @@ private:
                 success = false;
             }
 
+        }
+
+        if (!success) {
+            std::invoke(error, larr, rarr);
         }
 
         return success;
@@ -2287,10 +2307,10 @@ public:
 		node->left->visit(this);
 		node->right->visit(this);
 
-        Value r = stack.top(); stack.pop();
-        Value l = stack.top(); stack.pop();
+        std::vector<Value> rarr = GetFullType();
+        std::vector<Value> larr = GetFullType();
 
-        if(l.IsArray())
+        if(larr.front().IsArray())
         {
             switch(node->op.type)
             {
@@ -2302,22 +2322,22 @@ public:
                 case TOKEN_LESS_EQUAL:
                 case TOKEN_GREATER_EQUAL:
                 {
-                    LogError("Invalid operator operation on an array", l.GetLine(), l.GetLoc());
+                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
-        else if(l.IsPtr() && r.IsInt()) {
+        else if(larr.front().IsPtr() && rarr.front().IsInt()) {
             switch(node->op.type)
             {
                 case TOKEN_DIVIDE:
                 case TOKEN_MULTIPLY:
                 case TOKEN_NOT:
                 {
-                    LogError("Invalid operator operation on an array", l.GetLine(), l.GetLoc());
+                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
-        else if(l.IsStr() && r.IsStr()) {
+        else if(larr.front().IsStr() && rarr.front().IsStr()) {
             switch(node->op.type)
             {
                 case TOKEN_MINUS:
@@ -2329,22 +2349,20 @@ public:
                 case TOKEN_LESS_EQUAL:
                 case TOKEN_GREATER_EQUAL:
                 {
-                    LogError("Invalid operator operation on an array", l.GetLine(), l.GetLoc());
+                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
-
-        if(!CompareValueTypes())
-        {
-            LogError("Type '" + l.GetTypeAsString() + "' is incompatible with type '" + r.GetTypeAsString() + "'", l.GetLine(), l.GetLoc());
+        else if (larr.front().GetType() != rarr.front().GetType()) {
+            LogError("Cannot perform a binary operation on \"" + std::to_string(larr.front().GetType()) + "\" and \"" + std::to_string(rarr.front().GetType()) + "\"", larr.front().GetLine(), larr.front().GetLoc());
         }
 
         if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_OR))
         {
-            l = true;
+            larr.back() = true;
         }
 
-        stack.push(l);
+        stack.push(larr.back());
 	}
 
 	void visit(ValueNode* node)
@@ -2378,24 +2396,17 @@ public:
             node->value->visit(this);
             Value value = stack.top(); stack.pop();
             vartype = value.GetType();
+            node->type = new DefaultTypeNode(Token(GetKeyword(value.GetTypeAsString())));
         }
         else {
             node->type->visit(this);
-            std::vector<Value> type = GetFullType();
-            if(vartype == VALUE_NONE) {
-                LogError("Type does not exist '" + node->type.text + "'", node->type.line, node->type.location);
-                return;
-            }
-
             if(node->value != NULL)
             {
                 node->value->visit(this);
-                Value valuetype = stack.top(); stack.pop();
-                if(!CompareValueTypes(vartype, valuetype))
-                {
-                    LogError("Cannot assign '" + std::to_string(valuetype) + "' to '" + std::to_string(vartype) + "'", node->id.line, node->id.location);
-                    return;
-                }
+                vartype = stack.top().GetType();
+                CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
+                    LogError("Cannot assign '" + std::to_string(l.back().GetType()) + "' to '" + std::to_string(r.back().GetType()) + "'", node->id.line, node->id.location);
+                });
             }
         }
 
@@ -2422,14 +2433,11 @@ public:
 	void visit(AssignmentNode* node)
 	{
         Value var = current->FindType(node->id.text);
-
-        assignmentType = var.GetType();
+        stack.push(var);
         node->value->visit(this);
-        Value type = stack.top(); stack.pop();
-        if(!CompareValueTypes(var, type))
-        {
-            LogError("Cannot assign '" + type.GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->id.line, node->id.location);
-        }
+        CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
+            LogError("Cannot assign '" + l.back().GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->id.line, node->id.location);
+        });
 	}
 
 	void visit(FunctionNode* node)
@@ -2473,14 +2481,12 @@ public:
                 for(int i = 0; i < node->args.size(); i++)
                 {
                     node->args[i]->visit(this);
-
                     Value declared = func->args.at(i);
-                    Value passed = stack.top(); stack.pop();
+                    stack.push(declared);
 
-                    if(!CompareValueTypes(declared, passed))
-                    {
-                        LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + passed.GetTypeAsString() + "'", passed.GetLine(), passed.GetLoc());
-                    }
+                    CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
+                        LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + l.back().GetTypeAsString() + "'", l.back().GetLine(), l.back().GetLoc());
+                    });
                 }
 
                 stack.push(func->returntype);
@@ -3511,9 +3517,9 @@ public:
             case OPCODE_ALLOC:
             {
                 Value value = stack.top(); stack.pop();
-                Value ptr = memory.Alloc(value.GetSize());
+                PtrValue ptr = memory.Alloc(value.GetSize());
 
-                *memory.At(ptr.GetPtr()) = value;
+                *memory.At(&ptr) = value;
                 stack.push(ptr);
             } break;
             case OPCODE_FREE:
@@ -3526,7 +3532,7 @@ public:
             {
                 u64 current_pc = pc;
                 Value size = decodeConstant(p, pc);
-                auto subprogram = p.subprogram(pc, *size.GetInt() - (pc - current_pc));
+                Program subprogram = p.subprogram(pc, *size.GetInt() - (pc - current_pc));
                 deferstack.push(subprogram);
                 pc = current_pc + *size.GetInt();
             } break;
