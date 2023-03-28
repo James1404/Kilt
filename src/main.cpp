@@ -2117,14 +2117,14 @@ struct Parser
         }
         else if (AdvanceIfMatch(TOKEN_REF)) {
             t = current;
-            if (AdvanceIfMatch(TOKEN_LITERAL))
+            if (AdvanceIfMatch(TOKEN_IDENTIFIER))
             {
                 return new RefNode(t);
             }
         }
         else if (AdvanceIfMatch(TOKEN_DEREF)) {
             t = current;
-            if (AdvanceIfMatch(TOKEN_LITERAL))
+            if (AdvanceIfMatch(TOKEN_IDENTIFIER))
             {
                 return new DerefNode(t);
             }
