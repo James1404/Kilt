@@ -69,7 +69,7 @@ private:
     std::vector<T> data;
 public:
 	bool empty() const { return data.empty(); }
-	size_t size() const { return data.size(); }
+	u64 size() const { return data.size(); }
 
 	void push(T t) {
         data.push_back(t);
@@ -80,7 +80,7 @@ public:
     }
 
 	T& top() { return data.back(); }
-	T& at(size_t depth) { return data.at(size() - depth - 1); }
+	T& at(u64 depth) { return data.at(size() - depth - 1); }
 };
 
 bool IsLetter(char c)
@@ -177,7 +177,7 @@ std::map<std::string, TokenType> keywords = {
 };
 
 enum IntegerSizes : u8 {
-    INTEGER_8BIT = 0x00,
+    INTEGER_8BIT  = 0x00,
     INTEGER_16BIT = 0x01,
     INTEGER_32BIT = 0x02,
     INTEGER_64BIT = 0x03,
@@ -215,14 +215,14 @@ class ArrayValue {
 private:
     // NOTE: If array value is 0 then it is dynamic.
     // NOTE: size > 0 then its fixed sized.
-    size_t allocated = 0, used = 0;
+    u64 allocated = 0, used = 0;
     Value* data = NULL;
 
     ValueType type;
 
-    void allocate(size_t size);
+    void allocate(u64 size);
 public:
-    ArrayValue(ValueType type_, size_t size = -1)
+    ArrayValue(ValueType type_, u64 size = -1)
         : type(type_)
     {
         if (size > 0) {
@@ -245,7 +245,7 @@ public:
     ArrayValue slice(u64 start, u64 end);
     Value at(u64 idx);
 
-    size_t size() const {
+    u64 size() const {
         return used;
     }
 };
@@ -437,6 +437,11 @@ public:
     bool* GetBool() const { return static_cast<bool*>(data); }
     std::string* GetId() const { return static_cast<std::string*>(data); }
     PtrValue* GetPtr() const { return static_cast<PtrValue*>(data); }
+
+    std::string GetStrUnqouted() const {
+        std::string result = *static_cast<std::string*>(data);
+        return result.substr(1, result.size() - 2);
+    }
 
     u64 GetSize() const {
         u64 r = 0;
@@ -846,7 +851,7 @@ namespace std {
     }
 }
 
-void ArrayValue::allocate(size_t size) {
+void ArrayValue::allocate(u64 size) {
     if (data == NULL) {
         data = (Value*)malloc(sizeof(Value) * size);
     }
@@ -899,6 +904,10 @@ TokenType GetKeyword(std::string text)
 	return TOKEN_IDENTIFIER;
 }
 
+std::string QuoteStr(std::string str) {
+    return '"' + str + '"';
+}
+
 class Program;
 Program ToProgram(i64 value);
 Program ToProgram(double value);
@@ -932,7 +941,7 @@ public:
         return stream.at(idx);
     }
 
-    size_t size() const {
+    u64 size() const {
         return stream.size();
     }
 
@@ -2437,7 +2446,7 @@ public:
     void visit(ArrayLiteralNode* node)
     {
         std::vector<Value> expectedtype;
-        for(size_t i = 0; i < node->elements.size(); i++)
+        for(u64 i = 0; i < node->elements.size(); i++)
         {
             auto&& item = node->elements.at(i);
             item->visit(this);
@@ -2924,7 +2933,7 @@ std::map<OpcodeType,u64> OpcodeArgTable = {
     { OPCODE_FREE, 0 },
 
     { OPCODE_START_DEFER, 1 },
-    { OPCODE_EXEC_DEFER, 0 },
+    { OPCODE_EXEC_DEFER, 1 },
 
 };
 
@@ -3001,7 +3010,7 @@ struct Environment
 class MemoryArena {
 private:
    Value* mem = NULL;
-   size_t used = 0, allocated = 0;
+   u64 used = 0, allocated = 0;
 
    struct FreeMem {
        Value* loc;
@@ -3009,7 +3018,7 @@ private:
    };
    std::vector<FreeMem> freestack;
 
-   static constexpr size_t defaultSize = 10000;
+   static constexpr u64 defaultSize = 10000;
 
    void resize(u64 size) {
        allocated += size;
@@ -3170,12 +3179,32 @@ public:
                 {
                     case INTEGER_8BIT:
                     {
+                        u8 finalvalue = GetByte(p, pc);
                     } break;
                     case INTEGER_16BIT:
                     {
+                        u8 bytes8[2] = {
+                            GetByte(p, pc),
+                            GetByte(p, pc)
+                        };
+
+                        u16 finalvalue = (u16)((bytes8[1] << 8) | bytes8[0]);
                     } break;
                     case INTEGER_32BIT:
                     {
+                        u8 bytes8[4] = {
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc),
+                            GetByte(p, pc)
+                        };
+
+                        u16 bytes16[4] = {
+                            (u16)((bytes8[1] << 8) | bytes8[0]),
+                            (u16)((bytes8[3] << 8) | bytes8[2])
+                        };
+
+                        u32 finalvalue = (u32)((bytes16[1] << 16) | bytes16[0]);
                     } break;
                     case INTEGER_64BIT:
                     {
@@ -3391,8 +3420,7 @@ public:
                     stack.push(result);
                 }
                 else if(l.IsStr() && r.IsStr()) {
-                    // TODO: Fix quote's!!!!!
-                    Value result = *l.GetStr() + *r.GetStr();
+                    Value result = QuoteStr(l.GetStrUnqouted() + r.GetStrUnqouted());
                     stack.push(result);
                 }
             } break;
@@ -3644,9 +3672,13 @@ public:
             } break;
             case OPCODE_EXEC_DEFER:
             {
+                Value size = decodeConstant(p, pc);
+
                 if(!deferstack.empty()) {
-                    Program s = deferstack.top(); deferstack.pop();
-                    RunProgram(s);
+                    while((*size.GetInt())--) {
+                        Program s = deferstack.top(); deferstack.pop();
+                        RunProgram(s);
+                    }
                 }
             } break;
 
@@ -3745,10 +3777,18 @@ struct BytecodeEmitter : NodeVisitor
 {
     Program program;
 
+    u64 defercount = 0;
 	void visit(ScopeNode* node)
     {
+        u64 og_defercount = defercount;
         node->statement->visit(this);
-        program.push(OPCODE_EXEC_DEFER);
+
+        if(defercount > og_defercount) {
+            program.push(OPCODE_EXEC_DEFER);
+            program.push(Value((i64)(defercount - og_defercount)));
+        }
+
+        defercount = og_defercount;
     }
 
 	void visit(SequenceNode* node)
@@ -3984,6 +4024,7 @@ struct BytecodeEmitter : NodeVisitor
         program.push(Value((i64)0));
         node->stat->visit(this);
         program.replace(deferLoc, Value((i64)(program.size() - deferLoc)));
+        defercount++;
     }
 
     void visit(ImportNode* node) {
@@ -4034,7 +4075,7 @@ std::string LoadEntireFileIntoString(std::string path) {
 void WriteProgramToFile(std::string path, Program program) {
     std::ofstream out(path, std::ios::binary);
 
-    size_t progsize = program.size();
+    u64 progsize = program.size();
     u8* data = program.data();
     out.write(reinterpret_cast<char*>(&progsize), sizeof progsize);
     out.write(reinterpret_cast<char*>(&data), sizeof(u8) * program.size());
@@ -4052,7 +4093,7 @@ void IntrinsicPrintln(VirtualMachine& vm)
     switch(v.GetType()) {
         case VALUE_STR:
         {
-            std::cout << *v.GetStr() << '\n';
+            std::cout << v.GetStrUnqouted() << '\n';
         } break;
         case VALUE_INT:
         {
@@ -4091,6 +4132,26 @@ int CompileSourceFile(std::string path) {
                 FunctionData(VALUE_NONE, { VALUE_ANY }),
                 IntrinsicPrintln);
 
+        REGISTER_INTRINSIC(
+                max,
+                FunctionData(VALUE_INT, { VALUE_INT, VALUE_INT }),
+                [&](VirtualMachine& vm) {
+                    Value r = vm.stack.top(); vm.stack.pop();
+                    Value l = vm.stack.top(); vm.stack.pop();
+
+                    vm.stack.push((*l.GetInt() > *r.GetInt()) ? l : r);
+                });
+
+        REGISTER_INTRINSIC(
+                min,
+                FunctionData(VALUE_INT, { VALUE_INT, VALUE_INT }),
+                [&](VirtualMachine& vm) {
+                    Value r = vm.stack.top(); vm.stack.pop();
+                    Value l = vm.stack.top(); vm.stack.pop();
+
+                    vm.stack.push((*l.GetInt() < *r.GetInt()) ? l : r);
+                });
+
         parser.tree->visit(&tcv);
         if (error) return 1;
 
@@ -4098,6 +4159,7 @@ int CompileSourceFile(std::string path) {
         parser.tree->visit(&bce);
         if (error) return 1;
 
+        vm.PrintProgram(bce.program);
         vm.RunProgram(bce.program);
         if (error) return 1;
 
@@ -4106,10 +4168,10 @@ int CompileSourceFile(std::string path) {
         NodeFreeVisitor nfv;
         parser.tree->visit(&nfv);
 
-        // TODO: Think about explicit casting for e.g. cast(25, float)
-        // TODO: Make type's an explicit value;
         // TODO: Implement out of order function calling.
         // TODO: Implement default arg value.
+        // TODO: Make type's an explicit value;
+        // TODO: Implement explicit casting for e.g. cast(25, float)
         // TODO: Implement variadic args.
     }
     else {

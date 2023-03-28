@@ -1,5 +1,8 @@
 println(20);
-println("hey there");
 
-he := true;
-println(he);
+if 5 > 2 {
+    println("Greater");
+}
+
+name := "dylan";
+println("hey there " + name);
