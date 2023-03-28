@@ -1,1 +1,5 @@
-people: = [25, 30, -20, 50];
+println(20);
+println("hey there");
+
+he := true;
+println(he);

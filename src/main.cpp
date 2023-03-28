@@ -195,7 +195,9 @@ enum ValueType : u8 {
     VALUE_BOOL,
     VALUE_STR,
     VALUE_ID,
-    VALUE_PTR
+    VALUE_PTR,
+
+    VALUE_ANY
 };
 
 struct PtrValue {
@@ -326,6 +328,10 @@ private:
             case VALUE_PTR:
             {
                 delete static_cast<PtrValue*>(data);
+            } break;
+            case VALUE_ANY: 
+            {
+                // do nothing
             } break;
             default:
             {
@@ -644,7 +650,7 @@ public:
         }
     }
 
-	Value& operator=(Value& other)
+	Value& operator=(const Value& other)
     {
         FreeData();
         LinkToken(other.linked);
@@ -827,7 +833,7 @@ namespace std {
             case VALUE_ARRAY: { return std::to_string(*other.GetArray()); } break;
             case VALUE_INT: { return std::to_string(*other.GetInt()); } break;
             case VALUE_REAL: { return std::to_string(*other.GetReal()); } break;
-            case VALUE_STR: { return '"' + *other.GetStr() + '"'; } break;
+            case VALUE_STR: { return *other.GetStr(); } break;
             case VALUE_BOOL: { return (std::string)(*other.GetBool() ? "true" : "false"); } break;
             case VALUE_ID: { return *other.GetId() ; } break;
             case VALUE_PTR:
@@ -2230,8 +2236,10 @@ struct ScopedSymbolTable {
 
 class TypeChecker : public NodeVisitor
 {
+public:
+    ScopedSymbolTable global;
 private:
-    ScopedSymbolTable global, *current;
+    ScopedSymbolTable *current;
     Stack<Value> stack;
 
     ValueType assignmentType = VALUE_NONE;
@@ -2347,13 +2355,14 @@ public:
         {
             switch(node->op.type)
             {
-                case TOKEN_DIVIDE:
-                case TOKEN_MULTIPLY:
-                case TOKEN_NOT:
-                case TOKEN_LESS:
-                case TOKEN_GREATER:
-                case TOKEN_LESS_EQUAL:
-                case TOKEN_GREATER_EQUAL:
+                case TOKEN_PLUS:
+                case TOKEN_MINUS:
+                case TOKEN_EQUAL_EQUAL:
+                case TOKEN_NOT_EQUAL:
+                {
+
+                } break;
+                default:
                 {
                     LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
@@ -2362,9 +2371,18 @@ public:
         else if(larr.front().IsPtr() && rarr.front().IsInt()) {
             switch(node->op.type)
             {
-                case TOKEN_DIVIDE:
-                case TOKEN_MULTIPLY:
-                case TOKEN_NOT:
+                case TOKEN_PLUS:
+                case TOKEN_MINUS:
+                case TOKEN_EQUAL_EQUAL:
+                case TOKEN_NOT_EQUAL:
+                case TOKEN_LESS:
+                case TOKEN_GREATER:
+                case TOKEN_LESS_EQUAL:
+                case TOKEN_GREATER_EQUAL:
+                {
+                } break;
+
+                default:
                 {
                     LogError("Invalid operator operation on a ptr", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
@@ -2373,14 +2391,13 @@ public:
         else if(larr.front().IsStr() && rarr.front().IsStr()) {
             switch(node->op.type)
             {
-                case TOKEN_MINUS:
-                case TOKEN_DIVIDE:
-                case TOKEN_MULTIPLY:
-                case TOKEN_NOT:
-                case TOKEN_LESS:
-                case TOKEN_GREATER:
-                case TOKEN_LESS_EQUAL:
-                case TOKEN_GREATER_EQUAL:
+                case TOKEN_PLUS:
+                case TOKEN_EQUAL_EQUAL:
+                case TOKEN_NOT_EQUAL:
+                {
+
+                } break;
+                default:
                 {
                     LogError("Invalid operator operation on an string", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
@@ -2542,11 +2559,17 @@ public:
                 {
                     node->args[i]->visit(this);
                     Value declared = func->args.at(i);
-                    stack.push(declared);
 
-                    CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                        LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + l.back().GetTypeAsString() + "'", l.back().GetLine(), l.back().GetLoc());
-                    });
+                    if(declared.GetType() == VALUE_ANY) {
+
+                    }
+                    else {
+                        stack.push(declared);
+
+                        CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
+                            LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + l.back().GetTypeAsString() + "'", l.back().GetLine(), l.back().GetLoc());
+                        });
+                    }
                 }
 
                 stack.push(func->returntype);
@@ -3063,7 +3086,8 @@ public:
 class VirtualMachine
 {
 private:
-	Stack<Value> stack;
+    using IntrinsicFunction = std::function<void(VirtualMachine&)>;
+
     Stack<u64> callStack;
     Stack<Program> deferstack;
 
@@ -3071,11 +3095,23 @@ private:
 
 	Environment env;
     MemoryArena memory;
+
+    std::map<std::string,IntrinsicFunction> intrinsics;
 public:
-    VirtualMachine(Program& p)
-    {
-        PrintProgram(p);
-        RunProgram(p);
+	Stack<Value> stack;
+
+    void RegisterIntrinsic(std::string id, IntrinsicFunction func) {
+        intrinsics.emplace(id, func);
+    }
+
+    void CallIntrinsic(std::string id) {
+        auto it = intrinsics.find(id);
+        if(it != intrinsics.end()) {
+            std::invoke(it->second, *this);
+        }
+        else {
+            LogError("Cannot call function '" + id + "' as it doesn't exist");
+        }
     }
 
     void RunProgram(Program& p) {
@@ -3315,8 +3351,8 @@ public:
             case OPCODE_JUMP_SUBROUTINE:
             {
                 Value arg = decodeConstant(p, pc);
-                auto it = jumpTable.find(*arg.GetId());
-                if(it != jumpTable.end())
+                
+                if(auto it = jumpTable.find(*arg.GetId()); it != jumpTable.end())
                 {
                     env.IncrementDepth();
 
@@ -3325,7 +3361,7 @@ public:
                 }
                 else
                 {
-                    LogError("Jump location doesn't exist '" + *arg.GetId()  + "'");
+                    CallIntrinsic(*arg.GetId());
                 }
             } break;
             case OPCODE_RETURN_FROM_SUBROUTINE:
@@ -3494,6 +3530,10 @@ public:
                     Value result = (bool)(*l.GetReal() == *r.GetReal());
                     stack.push(result);
                 }
+                else if(l.IsStr()) {
+                    Value result = (bool)(*l.GetStr() == *r.GetStr());
+                    stack.push(result);
+                }
             } break;
             case OPCODE_COMP_NOT_EQUAL:
             {
@@ -3508,6 +3548,10 @@ public:
                 else if(l.IsReal())
                 {
                     Value result = (bool)(*l.GetReal() != *r.GetReal());
+                    stack.push(result);
+                }
+                else if(l.IsStr()) {
+                    Value result = (bool)(*l.GetStr() != *r.GetStr());
                     stack.push(result);
                 }
             } break;
@@ -3996,6 +4040,39 @@ void WriteProgramToFile(std::string path, Program program) {
     out.write(reinterpret_cast<char*>(&data), sizeof(u8) * program.size());
 }
 
+#define REGISTER_INTRINSIC(function_name, function_data, lambda)\
+    [&]() {\
+        tcv.global.SetFunction(#function_name, function_data);\
+        vm.RegisterIntrinsic(#function_name, lambda);\
+    }()
+
+void IntrinsicPrintln(VirtualMachine& vm)
+{
+    Value v = vm.stack.top(); vm.stack.pop();
+    switch(v.GetType()) {
+        case VALUE_STR:
+        {
+            std::cout << *v.GetStr() << '\n';
+        } break;
+        case VALUE_INT:
+        {
+            std::cout << std::to_string(*v.GetInt()) << '\n';
+        } break;
+        case VALUE_REAL:
+        {
+            std::cout << std::to_string(*v.GetReal()) << '\n';
+        } break;
+        case VALUE_BOOL:
+        {
+            std::cout << (*v.GetBool() ? "true" : "false") << '\n';
+        } break;
+        default:
+        {
+            LogError("Invalid print type \"" + std::to_string(v.GetType()) + "\"");
+        } break;
+    }
+}
+
 int CompileSourceFile(std::string path) {
     auto source = LoadEntireFileIntoString(path);
 
@@ -4006,7 +4083,14 @@ int CompileSourceFile(std::string path) {
         Parser parser(lexer.stream);
         if (error) return 1;
 
+        VirtualMachine vm;
         TypeChecker tcv(path);
+
+        REGISTER_INTRINSIC(
+                println,
+                FunctionData(VALUE_NONE, { VALUE_ANY }),
+                IntrinsicPrintln);
+
         parser.tree->visit(&tcv);
         if (error) return 1;
 
@@ -4014,33 +4098,19 @@ int CompileSourceFile(std::string path) {
         parser.tree->visit(&bce);
         if (error) return 1;
 
-        WriteProgramToFile("test.kasm", bce.program);
-
-        VirtualMachine vm(bce.program);
+        vm.RunProgram(bce.program);
         if (error) return 1;
-        vm.PrintRestOfStack();
-        vm.PrintGlobalSymbolTable();
+
+        WriteProgramToFile("test.kasm", bce.program);
 
         NodeFreeVisitor nfv;
         parser.tree->visit(&nfv);
-        // TODO: Automatic cast int to float if assigning to float e.g.
-        // number : float = 25;
-        //                   ^ this should be casted to a float
-        // NOTE: Actually this might not have to be.
+
         // TODO: Think about explicit casting for e.g. cast(25, float)
-
         // TODO: Make type's an explicit value;
-
         // TODO: Implement out of order function calling.
         // TODO: Implement default arg value.
-        // TODO: Implement any type.
         // TODO: Implement variadic args.
-        // TODO: Implement ptr's
-
-        // TODO: Implement intrinsic function's like
-        // println(args : any ...)
-        // len(list)
-        // at(list, idx)
     }
     else {
         LogError("Source is empty");
