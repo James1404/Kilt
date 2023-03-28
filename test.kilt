@@ -3,3 +3,4 @@ func double(n : int) : int {
 }
 
 age: = 17;
+age = double(age);

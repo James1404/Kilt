@@ -2408,6 +2408,9 @@ public:
                     LogError("Cannot assign '" + std::to_string(l.back().GetType()) + "' to '" + std::to_string(r.back().GetType()) + "'", node->id.line, node->id.location);
                 });
             }
+            else {
+                vartype = stack.top().GetType();
+            }
         }
 
         current->SetType(node->id.text, vartype);
