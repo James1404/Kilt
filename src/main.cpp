@@ -2333,7 +2333,7 @@ public:
                 case TOKEN_MULTIPLY:
                 case TOKEN_NOT:
                 {
-                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
+                    LogError("Invalid operator operation on a ptr", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
@@ -2349,7 +2349,7 @@ public:
                 case TOKEN_LESS_EQUAL:
                 case TOKEN_GREATER_EQUAL:
                 {
-                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
+                    LogError("Invalid operator operation on an string", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
