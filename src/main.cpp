@@ -2169,10 +2169,10 @@ struct ScopedSymbolTable {
 	}
 
     bool VariableExists(std::string name) {
-		auto it = typetable.find(name);
-		if (it != typetable.end()) return true;
+        auto it = typetable.find(name);
+        if (it != typetable.end()) return true;
 
-		if (parent != NULL) return parent->FindType(name);
+		if (parent != NULL) return parent->VariableExists(name);
 
 		return false;
     }
