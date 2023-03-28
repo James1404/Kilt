@@ -2769,7 +2769,7 @@ struct NodeFreeVisitor : NodeVisitor {
     void visit(DerefNode* node) {}
 };
 
-enum OpCodeType : u8
+enum OpcodeType : u8
 {
 	OPCODE_NONE = 0x00,
 
@@ -2797,7 +2797,7 @@ enum OpCodeType : u8
     OPCODE_MAX = 0xff
 };
 
-std::map<OpCodeType,u64> OpCodeArgTable = {
+std::map<OpcodeType,u64> OpcodeArgTable = {
     { OPCODE_PUSH, 1 },
     { OPCODE_POP, 0 },
     { OPCODE_STORE, 1 },
@@ -2834,20 +2834,11 @@ std::map<OpCodeType,u64> OpCodeArgTable = {
 
 };
 
-u64 GetOpcodeArgC(OpCodeType op) {
-    auto it = OpCodeArgTable.find(op);
-    if(it != OpCodeArgTable.end()) return it->second;
+u64 GetOpcodeArgC(OpcodeType op) {
+    auto it = OpcodeArgTable.find(op);
+    if(it != OpcodeArgTable.end()) return it->second;
     return -1;
 }
-
-// Instruction set
-//
-// PUSH constant
-// POP
-// STORE id
-// LOAD id
-//
-// OPCODE_START_SUBROUTINE id skip
 
 struct Environment
 {
@@ -3612,7 +3603,7 @@ public:
             default: { result = "INVALID OPCODE"; } break;
         }
 
-        u64 argc = GetOpcodeArgC((OpCodeType)opcode);
+        u64 argc = GetOpcodeArgC((OpcodeType)opcode);
         if(argc == -1)
         {
             LogError("Opcode does not have an existing argc, '" + std::to_string(opcode) + "'");
