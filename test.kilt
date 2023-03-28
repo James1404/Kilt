@@ -1,6 +1,1 @@
-func double(n : int) : int {
-	return n * 2;
-}
-
-age: = 17;
-age = double(age);
+people: = [25, 30, -20, 50];

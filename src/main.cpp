@@ -561,6 +561,12 @@ public:
 		data = new bool(other);
 	}
 
+    Value(ArrayValue other)
+    {
+        type = VALUE_ARRAY;
+        data = new ArrayValue(other);
+    }
+
 	Value(PtrValue other)
 	{
         type = VALUE_PTR;
@@ -740,6 +746,14 @@ public:
         ParseIdentifier(other);
         return *this;
 	}
+
+    Value& operator=(ArrayValue& other)
+    {
+        FreeData();
+        type = VALUE_ARRAY;
+        data = new ArrayValue(other);
+        return *this;
+    }
 
 	Value& operator=(PtrValue& other)
 	{
@@ -1221,6 +1235,7 @@ struct ScopeNode;
 struct SequenceNode;
 struct BinaryNode;
 struct ValueNode;
+struct ArrayLiteralNode;
 struct VariableDeclNode;
 struct DefaultTypeNode;
 struct ArrayTypeNode;
@@ -1247,6 +1262,7 @@ struct NodeVisitor
 	virtual void visit(SequenceNode* node) = 0;
 	virtual void visit(BinaryNode* node) = 0;
 	virtual void visit(ValueNode* node) = 0;
+    virtual void visit(ArrayLiteralNode* node) = 0;
 	virtual void visit(VariableDeclNode* node) = 0;
     virtual void visit(DefaultTypeNode* node) = 0;
     virtual void visit(ArrayTypeNode* node) = 0;
@@ -1333,6 +1349,16 @@ struct ValueNode : Node
     ValueType type = VALUE_NONE;
 
 	VISIT_
+};
+
+struct ArrayLiteralNode : Node {
+    std::vector<Node*> elements;
+
+    ArrayLiteralNode(std::vector<Node*> elements_)
+        : elements(elements_)
+    {}
+
+    VISIT_
 };
 
 struct VariableDeclNode : Node
@@ -2102,9 +2128,16 @@ struct Parser
         }
         else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
         {
+            std::vector<Node*> values;
+
+            values.push_back(Expression());
+            while (AdvanceIfMatch(TOKEN_COMMA)) {
+                values.push_back(Expression());
+            }
+
             if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
             {
-                return new ValueNode(t, VALUE_ARRAY);
+                return new ArrayLiteralNode(values);
             }
         }
         else if (AdvanceIfMatch(TOKEN_ALLOC)) {
@@ -2384,6 +2417,30 @@ public:
         stack.push(v);
     }
 
+    void visit(ArrayLiteralNode* node)
+    {
+        std::vector<Value> expectedtype;
+        for(size_t i = 0; i < node->elements.size(); i++)
+        {
+            auto&& item = node->elements.at(i);
+            item->visit(this);
+
+            auto type = GetFullType();
+
+            if (i == 0) expectedtype = type;
+
+            stack.push(expectedtype.back());
+            stack.push(type.back());
+
+            CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
+                LogError("Array literal expects type \"" + std::to_string(l.back().GetType()) + "\" instead it got \"" + std::to_string(r.back().GetType()) + "\"");
+            });
+        }
+
+        stack.push(expectedtype.back());
+        stack.push(VALUE_ARRAY);
+    }
+
 	void visit(VariableDeclNode* node)
 	{
         if(current->VariableExists(node->id.text)) {
@@ -2658,6 +2715,17 @@ struct NodeFreeVisitor : NodeVisitor {
 	}
 
 	void visit(ValueNode* node) {}
+
+    void visit(ArrayLiteralNode* node)
+    {
+        for (auto&& n : node->elements) {
+            n->visit(this);
+            delete n;
+        }
+
+        node->elements.clear();
+    }
+
 	void visit(VariableDeclNode* node)
     {
         if(node->type != NULL)
@@ -3690,6 +3758,10 @@ struct BytecodeEmitter : NodeVisitor
             program.push(OPCODE_PUSH);
             program.push(value);
         }
+    }
+
+    void visit(ArrayLiteralNode* node)
+    {
     }
 
 	void visit(VariableDeclNode* node)
