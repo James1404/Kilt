@@ -147,7 +147,7 @@ struct Token
 
 namespace std {
     std::string to_string(Token other) {
-        return std::to_string(other.type) + ": " + "\"" + other.text + "\"" + '\n';
+        return std::to_string(other.type) + ": " + "\'" + other.text + "\'" + '\n';
     }
 }
 
@@ -453,7 +453,7 @@ public:
             case VALUE_ID: r = sizeof(char) * GetId()->size(); break;
             default:
             {
-                LogError("Cannot get size of type: \"" + std::to_string(type) + "\"");
+                LogError("Cannot get size of type: \'" + std::to_string(type) + "\'");
             } break;
         }
         return r;
@@ -1077,7 +1077,7 @@ private:
 	}
 
     void eval() {
-        		int line = 0;
+        int line = 1;
 		for (location = 0; location < source.size(); location++)
 		{
 			char c = source.at(location);
@@ -2250,6 +2250,7 @@ public:
 private:
     ScopedSymbolTable *current;
     Stack<Value> stack;
+    Stack<Node*> deferstack;
 
     ValueType assignmentType = VALUE_NONE;
 
@@ -2341,6 +2342,12 @@ public:
     {
         NewCurrent();
         node->statement->visit(this);
+
+        while(!deferstack.empty()) {
+            deferstack.top()->visit(this);
+            deferstack.pop();
+        }
+
         DeleteCurrent();
     }
 
@@ -2408,12 +2415,12 @@ public:
                 } break;
                 default:
                 {
-                    LogError("Invalid operator operation on an string", larr.front().GetLine(), larr.front().GetLoc());
+                    LogError("Invalid operator operation on a string", larr.front().GetLine(), larr.front().GetLoc());
                 } break;
             }
         }
         else if (larr.front().GetType() != rarr.front().GetType()) {
-            LogError("Cannot perform a binary operation on \"" + std::to_string(larr.front().GetType()) + "\" and \"" + std::to_string(rarr.front().GetType()) + "\"", larr.front().GetLine(), larr.front().GetLoc());
+            LogError("Cannot perform a binary operation on \'" + std::to_string(larr.front().GetType()) + "\' and \'" + std::to_string(rarr.front().GetType()) + "\'", larr.front().GetLine(), larr.front().GetLoc());
         }
 
         if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_OR))
@@ -2459,7 +2466,7 @@ public:
             stack.push(type.back());
 
             CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                LogError("Array literal expects type \"" + std::to_string(l.back().GetType()) + "\" instead it got \"" + std::to_string(r.back().GetType()) + "\"");
+                LogError("Array literal expects type \'" + std::to_string(l.back().GetType()) + "\' instead it got \'" + std::to_string(r.back().GetType()) + "\'");
             });
         }
 
@@ -2518,6 +2525,11 @@ public:
 
 	void visit(AssignmentNode* node)
 	{
+        if(!current->VariableExists(node->id.text)) {
+            LogError("Cannot assign to '" + node->id.text + "' since it doesn't exist within the current scope", node->id.line, node->id.location);
+            return;
+        }
+
         Value var = current->FindType(node->id.text);
         stack.push(var);
         node->value->visit(this);
@@ -2665,6 +2677,7 @@ public:
 
 	void visit(DeferNode* node)
     {
+        deferstack.push(node->stat);
     }
 
     void visit(ImportNode* node) {
@@ -2700,21 +2713,21 @@ public:
 
     void visit(FreeNode* node) {
         if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot free a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            LogError("Cannot free a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
             return;
         }
     }
 
     void visit(RefNode* node) {
         if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot get a reference to a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            LogError("Cannot get a reference to a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
             return;
         }
     }
 
     void visit(DerefNode* node) {
         if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot dereference a variable that doesn't exist: \"" + node->id.text + "\"", node->id.line, node->id.location);
+            LogError("Cannot dereference a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
             return;
         }
     }
@@ -3778,9 +3791,10 @@ struct BytecodeEmitter : NodeVisitor
     Program program;
 
     u64 defercount = 0;
+    u64 og_defercount = 0;
 	void visit(ScopeNode* node)
     {
-        u64 og_defercount = defercount;
+        og_defercount = defercount;
         node->statement->visit(this);
 
         if(defercount > og_defercount) {
@@ -3999,20 +4013,36 @@ struct BytecodeEmitter : NodeVisitor
 	void visit(ReturnNode* node)
     {
         if(node->expr != NULL) node->expr->visit(this);
-        program.push(OPCODE_EXEC_DEFER);
+
+        if(defercount > og_defercount) {
+            program.push(OPCODE_EXEC_DEFER);
+            program.push(Value((i64)(defercount - og_defercount)));
+            defercount = og_defercount;
+        }
+
         program.push(OPCODE_RETURN_FROM_SUBROUTINE);
     }
 
 	void visit(BreakNode* node)
     {
-        program.push(OPCODE_EXEC_DEFER);
+        if(defercount > og_defercount) {
+            program.push(OPCODE_EXEC_DEFER);
+            program.push(Value((i64)(defercount - og_defercount)));
+            defercount = og_defercount;
+        }
+
         program.push(OPCODE_JUMP);
         program.push(Value((i64)breakloc));
     }
 
 	void visit(ContinueNode* node)
     {
-        program.push(OPCODE_EXEC_DEFER);
+        if(defercount > og_defercount) {
+            program.push(OPCODE_EXEC_DEFER);
+            program.push(Value((i64)(defercount - og_defercount)));
+            defercount = og_defercount;
+        }
+
         program.push(OPCODE_JUMP);
         program.push(Value((i64)loopstart));
     }
@@ -4109,7 +4139,7 @@ void IntrinsicPrintln(VirtualMachine& vm)
         } break;
         default:
         {
-            LogError("Invalid print type \"" + std::to_string(v.GetType()) + "\"");
+            LogError("Invalid print type \'" + std::to_string(v.GetType()) + "\'");
         } break;
     }
 }

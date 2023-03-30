@@ -1,8 +1,0 @@
-println(20);
-
-if 5 > 2 {
-    println("Greater");
-}
-
-name := "dylan";
-println("hey there " + name);
