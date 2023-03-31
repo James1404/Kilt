@@ -284,6 +284,7 @@ namespace std {
             case VALUE_BOOL: { return "bool"; } break;
             case VALUE_ID: { return "id"; } break;
             case VALUE_PTR: { return "ptr"; } break;
+            case VALUE_NONE: { return "none";  } break;
         }
         return "NULL TYPE " + std::to_string((int)other);
     }
@@ -2489,16 +2490,17 @@ public:
             node->type = new DefaultTypeNode(Token(GetKeyword(value.GetTypeAsString())));
         }
         else {
-            node->type->visit(this);
             if(node->value != NULL)
             {
                 node->value->visit(this);
+                node->type->visit(this);
                 vartype = stack.top().GetType();
                 CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                    LogError("Cannot assign '" + std::to_string(l.back().GetType()) + "' to '" + std::to_string(r.back().GetType()) + "'", node->id.line, node->id.location);
+                    LogError("Cannot assign '" + std::to_string(r.back().GetType()) + "' to '" + std::to_string(l.back().GetType()) + "'", node->id.line, node->id.location);
                 });
             }
             else {
+                node->type->visit(this);
                 vartype = stack.top().GetType();
             }
         }
@@ -2534,7 +2536,7 @@ public:
         stack.push(var);
         node->value->visit(this);
         CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-            LogError("Cannot assign '" + l.back().GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->id.line, node->id.location);
+            LogError("Cannot assign '" + r.back().GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->id.line, node->id.location);
         });
 	}
 
@@ -2582,7 +2584,7 @@ public:
                     Value declared = func->args.at(i);
 
                     if(declared.GetType() == VALUE_ANY) {
-
+                        auto temp = GetFullType();
                     }
                     else {
                         stack.push(declared);
@@ -4139,9 +4141,50 @@ void IntrinsicPrintln(VirtualMachine& vm)
         } break;
         default:
         {
-            LogError("Invalid print type \'" + std::to_string(v.GetType()) + "\'");
+            LogError("Invalid println type \'" + std::to_string(v.GetType()) + "\'");
         } break;
     }
+}
+
+void IntrinsicGetln(VirtualMachine& vm)
+{
+    Value v = vm.stack.top(); vm.stack.pop();
+
+    std::string result = "";
+    std::cout << v.GetStrUnqouted();
+    std::cin >> result;
+
+    vm.stack.push(result);
+}
+
+void IntrinsicToString(VirtualMachine& vm)
+{
+    Value v = vm.stack.top(); vm.stack.pop();
+    std::string result = "";
+    switch(v.GetType()) {
+        case VALUE_STR:
+        {
+            result = *v.GetStr();
+        } break;
+        case VALUE_INT:
+        {
+            result = std::to_string(*v.GetInt());
+        } break;
+        case VALUE_REAL:
+        {
+            result = std::to_string(*v.GetReal());
+        } break;
+        case VALUE_BOOL:
+        {
+            result = *v.GetBool() ? "true" : "false";
+        } break;
+        default:
+        {
+            LogError("Invalid to_string type \'" + std::to_string(v.GetType()) + "\'");
+        } break;
+    }
+
+    vm.stack.push('"' + result + '"');
 }
 
 int CompileSourceFile(std::string path) {
@@ -4163,6 +4206,11 @@ int CompileSourceFile(std::string path) {
                 IntrinsicPrintln);
 
         REGISTER_INTRINSIC(
+                getln,
+                FunctionData(VALUE_STR, { VALUE_STR }),
+                IntrinsicGetln);
+
+        REGISTER_INTRINSIC(
                 max,
                 FunctionData(VALUE_INT, { VALUE_INT, VALUE_INT }),
                 [&](VirtualMachine& vm) {
@@ -4181,6 +4229,11 @@ int CompileSourceFile(std::string path) {
 
                     vm.stack.push((*l.GetInt() < *r.GetInt()) ? l : r);
                 });
+
+        REGISTER_INTRINSIC(
+                to_string,
+                FunctionData(VALUE_STR, { VALUE_ANY }),
+                IntrinsicToString);
 
         parser.tree->visit(&tcv);
         if (error) return 1;
