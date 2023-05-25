@@ -11,7 +11,7 @@ env:
   BUILD_TYPE: Release
 
 jobs:
-  build:
+  ubuntu-build:
     # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
     # You can convert this to a matrix build if you need cross-platform coverage.
     # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
@@ -32,12 +32,12 @@ jobs:
     - name: Archive production artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: build
+        name: ubuntu-release
         path: |
           build
           !build/**/*.md
     - name: Create Release
       uses: ncipollo/release-action@v1.12.0
       with:
-        artifacts: "build"
+        artifacts: "ubuntu-release"
         tag: "release"
