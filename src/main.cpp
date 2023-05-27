@@ -1450,16 +1450,16 @@ struct Parser
 
 				if (AdvanceIfMatch(TOKEN_RIGHT_PARENTHESIS))
 				{
-					Token returntype;
+                    Node* ret = NULL;
 					if (AdvanceIfMatch(TOKEN_COLON))
 					{
-						returntype = current;
+                        ret = new IdentifierNode(current.text);
                         advance();
 					}
 
 					Node* block = StatementBlock();
 
-					return new FunctionNode(new IdentifierNode(id.text), new IdentifierNode(returntype.text), args_decl, block);
+					return new FunctionNode(new IdentifierNode(id.text), ret, args_decl, block);
 				}
                 else
                 {
@@ -2077,10 +2077,13 @@ public:
         node->id->visit(this);
         Value id = stack.top(); stack.pop();
         
-        node->returntype->visit(this);
-        Value returnval = stack.top(); stack.pop();
+        Value returnval = VALUE_NONE;
+        if(node->returntype) {
+            node->returntype->visit(this);
+            returnval = stack.top(); stack.pop();
+        }
 
-        current->parent->SetFunction(*id.GetId(), FunctionData(StringToValueType(*returnval.GetId()), args));
+        current->parent->SetFunction(*id.GetId(), FunctionData(returnval.GetType(), args));
 
         got_return = false;
 
@@ -3340,6 +3343,303 @@ struct BytecodeEmitter : NodeVisitor
     }
 };
 
+struct PrettyPrinter : NodeVisitor {
+	void visit(ScopeNode* node)
+    {
+        std::cout << "{\n";
+        node->statement->visit(this);
+        std::cout << "}\n";
+    }
+    
+	void visit(IdentifierNode* node)
+    {
+        std::cout << node->id;
+    }
+    
+	void visit(SequenceNode* node)
+    {
+		for (auto&& n : node->lst)
+		{
+			n->visit(this);
+            std::cout << "\n";
+		}
+    }
+    
+	void visit(BinaryNode* node)
+    {
+        node->left->visit(this);
+        std::cout << ' ';
+        switch(node->op.type) {
+            case TOKEN_PLUS:
+                std::cout << '+';
+                break;
+			case TOKEN_MINUS:
+                std::cout << '-';
+                break;
+			case TOKEN_DIVIDE:
+                std::cout << '/';
+                break;
+			case TOKEN_MULTIPLY:
+                std::cout << '*';
+                break;
+        }
+        std::cout << ' ';
+        node->right->visit(this);
+    }
+    
+	void visit(ValueNode* node)
+    {
+        if(node->negative) std::cout << '-';
+        std::cout << node->token.text;
+    }
+    
+	void visit(VariableDeclNode* node)
+    {
+        node->id->visit(this);
+        std::cout << ": ";
+        node->type->visit(this);
+        std::cout << " = ";
+        node->value->visit(this);
+        std::cout << ";";
+    }
+    
+	void visit(AssignmentNode* node)
+    {
+        node->id->visit(this);
+        std::cout << " = ";
+        node->value->visit(this);
+        std::cout << ";";
+    }
+    
+	void visit(FunctionNode* node)
+    {
+        std::cout << "func ";
+        node->id->visit(this);
+        std::cout << "(";
+        for(int i = 0; i < node->args.size(); i++) {
+            node->args[i]->visit(this);
+
+            if(i < node->args.size() - 1) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << ")";
+        if(node->returntype) {
+            std::cout << ": ";
+            node->returntype->visit(this);
+        }
+        std::cout << "{\n";
+        node->block->visit(this);
+        std::cout << "}";
+    }
+    
+	void visit(CallNode* node)
+    {
+        node->id->visit(this);
+        std::cout << "(";
+        for(int i = 0; i < node->args.size(); i++) {
+            node->args[i]->visit(this);
+
+            if(i < node->args.size() - 1) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << ")";
+    }
+    
+	void visit(IfNode* node)
+    {
+        std::cout << "if ";
+        node->cond->visit(this);
+        std::cout << "{\n";
+        node->block->visit(this);
+        std::cout << "}";
+        if(node->elseblock) {
+            std::cout << "else {\n";
+            node->elseblock->visit(this);
+            std::cout << "}";
+        }
+    }
+    
+	void visit(ForNode* node)
+    {
+        std::cout << "for ";
+        if(node->init) node->init->visit(this);
+        std::cout << ", ";
+        if(node->cond) node->cond->visit(this);
+        std::cout << ", ";
+        if(node->incr) node->incr->visit(this);
+        std::cout << "{\n";
+        node->block->visit(this);
+        std::cout << "}";
+    }
+    
+	void visit(LoopNode* node)
+    {
+        std::cout << "loop ";
+        std::cout << "{\n";
+        node->block->visit(this);
+        std::cout << "}";
+    }
+    
+	void visit(ReturnNode* node)
+    {
+        std::cout << "return";
+        if(node->expr) {
+            std::cout << " ";
+            node->expr->visit(this);
+        }
+        std::cout << ";";
+    }
+    
+	void visit(BreakNode* node)
+    {
+        std::cout << "return;";
+    }
+    
+	void visit(ContinueNode* node)
+    {
+        std::cout << "continue;";
+    }
+    
+	void visit(DeferNode* node)
+    {
+        std::cout << "defer ";
+        node->stat->visit(this);
+    }
+    
+    void visit(ImportNode* node)
+    {
+    }
+};
+
+struct AstPrinter: NodeVisitor {
+    uint64_t tab = 0;
+    void tabPrint(std::string msg) {
+        for(int i = 0; i < tab; i++) std::cout << "  ";
+        std::cout << msg + '\n';
+    }
+
+    void printNode(Node* node) {
+        if(node) {
+            node->visit(this);
+        }
+        else {
+            tabPrint("empty");
+        }
+    }
+
+    void printNode(std::string msg) {
+        tabPrint(msg);
+    }
+
+    void printNode(std::vector<Node*> nodes) {
+        for(auto&& node : nodes) {
+            printNode(node);
+        }
+    }
+
+    void printNode(Token token) {
+        tabPrint(token.text);
+    }
+
+    template<typename... Nodes>
+    void printNode(std::string name, Nodes... nodes) {
+        tabPrint(name);
+        tab++;
+        ((printNode(nodes)), ...);
+        tab--;
+    }
+
+	void visit(ScopeNode* node)
+    {
+        printNode("Scope", node->statement);
+    }
+    
+	void visit(IdentifierNode* node)
+    {
+        printNode("Ident", '"' + node->id + '"');
+    }
+    
+	void visit(SequenceNode* node)
+    {
+        printNode(node->lst);
+    }
+    
+	void visit(BinaryNode* node)
+    {
+        printNode("Binary", node->op, node->left, node->right);
+    }
+    
+	void visit(ValueNode* node)
+    {
+        if(node->negative) {
+            printNode("-" + node->token.text);
+        }
+        else {
+            printNode(node->token);
+        }
+    }
+    
+	void visit(VariableDeclNode* node)
+    {
+        printNode("Decl", node->id, node->type, node->value);
+    }
+    
+	void visit(AssignmentNode* node)
+    {
+        printNode("Assgn", node->id, node->value);
+    }
+    
+	void visit(FunctionNode* node)
+    {
+        printNode("Func", node->id, node->returntype, node->args, node->block);
+    }
+    
+	void visit(CallNode* node)
+    {
+        printNode("Call", node->id, node->args);
+    }
+    
+	void visit(IfNode* node)
+    {
+        printNode("If", node->cond, node->block, node->elseblock);
+    }
+    
+	void visit(ForNode* node)
+    {
+        printNode("For", node->init, node->cond, node->incr, node->block);
+    }
+    
+	void visit(LoopNode* node)
+    {
+        printNode("Loop", node->block);
+    }
+    
+	void visit(ReturnNode* node)
+    {
+        printNode("Return", node->expr);
+    }
+    
+	void visit(BreakNode* node)
+    {
+        printNode("Break");
+    }
+    
+	void visit(ContinueNode* node)
+    {
+        printNode("Continue");
+    }
+    
+	void visit(DeferNode* node)
+    {
+        printNode("Defer", node->stat);
+    }
+    
+    void visit(ImportNode* node)
+    {
+    }
+};
 void PrintTokenStream(TokenStream stream) {
 	for (auto&& t : stream) {
         std::cout << std::to_string(t);
@@ -3493,6 +3793,14 @@ int CompileSourceFile(std::string path) {
                 IntrinsicToString);
 
         parser.tree->visit(&tcv);
+        if (error) return 1;
+
+        PrettyPrinter pp;
+        parser.tree->visit(&pp);
+        if (error) return 1;
+
+        AstPrinter ap;
+        parser.tree->visit(&ap);
         if (error) return 1;
 
         BytecodeEmitter bce;
