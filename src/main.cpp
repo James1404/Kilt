@@ -121,12 +121,6 @@ enum TokenType
 
     TOKEN_AND, TOKEN_OR,
 
-    TOKEN_PTR,
-    TOKEN_ALLOC, TOKEN_FREE,
-    TOKEN_REF, TOKEN_DEREF, 
-
-    TOKEN_LIST, // list is "..."
-
     TOKEN_DEFER, TOKEN_IMPORT,
 };
 
@@ -164,14 +158,6 @@ std::map<std::string, TokenType> keywords = {
     { "true", TOKEN_LITERAL },
     { "false", TOKEN_LITERAL },
 
-    { "ptr", TOKEN_PTR },
-    { "alloc", TOKEN_ALLOC },
-    { "free", TOKEN_FREE },
-    { "ref", TOKEN_REF },
-    { "deref", TOKEN_DEREF },
-
-    { "...", TOKEN_LIST },
-
     { "defer", TOKEN_DEFER },
     { "import", TOKEN_IMPORT },
 };
@@ -189,77 +175,13 @@ class Value;
 enum ValueType : u8 { 
     VALUE_NONE = 0x00,
 
-    VALUE_ARRAY,
     VALUE_INT,
     VALUE_REAL,
     VALUE_BOOL,
     VALUE_STR,
     VALUE_ID,
-    VALUE_PTR,
 
     VALUE_ANY
-};
-
-struct PtrValue {
-    Value* ptr;
-    u64 size;
-
-    PtrValue() = delete;
-    PtrValue(PtrValue& other) = default;
-    PtrValue(Value* ptr_, u64 size_)
-        : ptr(ptr_), size(size_)
-    {}
-};
-
-class ArrayValue {
-private:
-    // NOTE: If array value is 0 then it is dynamic.
-    // NOTE: size > 0 then its fixed sized.
-    u64 allocated = 0, used = 0;
-    Value* data = NULL;
-
-    ValueType type;
-
-    void allocate(u64 size);
-public:
-    ArrayValue(ValueType type_, u64 size = -1)
-        : type(type_)
-    {
-        if (size > 0) {
-            allocate(size);
-        }
-        else {
-            allocate(10);
-        }
-    }
-
-    ArrayValue(const ArrayValue& other)
-        : allocated(other.allocated), used(other.used)
-    {
-        allocate(allocated);
-        memcpy(&data, &other.data, used); // TODO: Fix this its probably stupid
-    }
-
-    void push(Value v);
-    void erase(u64 idx);
-    ArrayValue slice(u64 start, u64 end);
-    Value at(u64 idx);
-
-    u64 size() const {
-        return used;
-    }
-};
-
-namespace std {
-    std::string to_string(ArrayValue other) {
-        return "";
-    }
-}
-
-class FunctionValue {
-private:
-    ValueType returntype;
-    std::vector<ValueType> argtypes;
 };
 
 ValueType StringToValueType(std::string type)
@@ -277,13 +199,12 @@ namespace std {
     std::string to_string(ValueType other) {
         switch (other)
         {
-            case VALUE_ARRAY: { return "array"; } break;
             case VALUE_INT: { return "int"; } break;
             case VALUE_REAL: { return "float"; } break;
             case VALUE_STR: { return "string"; } break;
             case VALUE_BOOL: { return "bool"; } break;
             case VALUE_ID: { return "id"; } break;
-            case VALUE_PTR: { return "ptr"; } break;
+            case VALUE_ANY: { return "any"; } break;
             case VALUE_NONE: { return "none";  } break;
         }
         return "NULL TYPE " + std::to_string((int)other);
@@ -302,10 +223,6 @@ private:
 
         switch(type)
         {
-            case VALUE_ARRAY:
-            {
-                delete static_cast<ArrayValue*>(data);
-            } break;
             case VALUE_INT:
             {
                 delete static_cast<i64*>(data);
@@ -325,10 +242,6 @@ private:
             case VALUE_ID:
             {
                 delete static_cast<std::string*>(data);
-            } break;
-            case VALUE_PTR:
-            {
-                delete static_cast<PtrValue*>(data);
             } break;
             case VALUE_ANY: 
             {
@@ -421,23 +334,19 @@ private:
         type = VALUE_ID;
     }
 public:
-    bool IsArray() const { return type == VALUE_ARRAY; }
     bool IsInt() const { return type == VALUE_INT; }
     bool IsReal() const { return type == VALUE_REAL; }
     bool IsStr() const { return type == VALUE_STR; }
     bool IsBool() const { return type == VALUE_BOOL; }
     bool IsId() const { return type == VALUE_ID; }
-    bool IsPtr() const { return type == VALUE_PTR; }
 
     ValueType& GetType() { return type; }
 
-    ArrayValue* GetArray() const { return static_cast<ArrayValue*>(data); }
     i64* GetInt() const { return static_cast<i64*>(data); }
     double* GetReal() const { return static_cast<double*>(data); }
     std::string* GetStr() const { return static_cast<std::string*>(data); }
     bool* GetBool() const { return static_cast<bool*>(data); }
     std::string* GetId() const { return static_cast<std::string*>(data); }
-    PtrValue* GetPtr() const { return static_cast<PtrValue*>(data); }
 
     std::string GetStrUnqouted() const {
         std::string result = *static_cast<std::string*>(data);
@@ -501,10 +410,6 @@ public:
 
         switch(type)
         {
-            case VALUE_ARRAY:
-            {
-                data = new ArrayValue(*other.GetArray());
-            } break;
             case VALUE_INT:
             {
                 data = new i64(*other.GetInt());
@@ -524,10 +429,6 @@ public:
             case VALUE_ID:
             {
                 data = new std::string(*other.GetId());
-            } break;
-            case VALUE_PTR:
-            {
-                data = new PtrValue(*other.GetPtr());
             } break;
         }
     }
@@ -573,27 +474,11 @@ public:
 		data = new bool(other);
 	}
 
-    Value(ArrayValue other)
-    {
-        type = VALUE_ARRAY;
-        data = new ArrayValue(other);
-    }
-
-	Value(PtrValue other)
-	{
-        type = VALUE_PTR;
-        data = new PtrValue(other.ptr, other.size);
-	}
-
     Value(ValueType type_)
         : type(type_)
     {
         switch(type)
         {
-            /*case VALUE_ARRAY:
-            {
-                data = new ArrayValue();
-            } break;*/
             case VALUE_INT:
             {
                 data = new i64(0);
@@ -613,10 +498,6 @@ public:
             case VALUE_ID:
             {
                 data = new std::string("");
-            } break;
-            case VALUE_PTR:
-            {
-                data = new PtrValue(NULL, 0);
             } break;
         }
     }
@@ -664,10 +545,6 @@ public:
 
         switch(type)
         {
-            case VALUE_ARRAY:
-            {
-                data = new ArrayValue(*other.GetArray());
-            } break;
             case VALUE_INT:
             {
                 data = new i64(*other.GetInt());
@@ -687,10 +564,6 @@ public:
             case VALUE_ID:
             {
                 data = new std::string(*other.GetId());
-            } break;
-            case VALUE_PTR:
-            {
-                data = new PtrValue(*other.GetPtr());
             } break;
         }
 
@@ -759,34 +632,12 @@ public:
         return *this;
 	}
 
-    Value& operator=(ArrayValue& other)
-    {
-        FreeData();
-        type = VALUE_ARRAY;
-        data = new ArrayValue(other);
-        return *this;
-    }
-
-	Value& operator=(PtrValue& other)
-	{
-        FreeData();
-        type = VALUE_PTR;
-        data = new PtrValue(other.ptr, other.size);
-        return *this;
-	}
-
     Value& operator=(ValueType type_)
     {
         FreeData();
         type = type_;
         switch(type)
         {
-            /*
-            case VALUE_ARRAY:
-            {
-                data = new ArrayValue();
-            } break;
-            */
             case VALUE_INT:
             {
                 data = new i64(0);
@@ -806,10 +657,6 @@ public:
             case VALUE_ID:
             {
                 data = new std::string("");
-            } break;
-            case VALUE_PTR:
-            {
-                data = new PtrValue(NULL, 0);
             } break;
         }
 
@@ -836,66 +683,14 @@ namespace std {
     std::string to_string(Value& other) {
         switch (other.GetType())
         {
-            case VALUE_ARRAY: { return std::to_string(*other.GetArray()); } break;
             case VALUE_INT: { return std::to_string(*other.GetInt()); } break;
             case VALUE_REAL: { return std::to_string(*other.GetReal()); } break;
             case VALUE_STR: { return *other.GetStr(); } break;
             case VALUE_BOOL: { return (std::string)(*other.GetBool() ? "true" : "false"); } break;
             case VALUE_ID: { return *other.GetId() ; } break;
-            case VALUE_PTR:
-            {
-                return std::to_string(*other.GetPtr()->ptr) +
-                       " (loc: " + std::to_string((u64)other.GetPtr()->ptr) + ")";
-            } break;
         }
         return "";
     }
-}
-
-void ArrayValue::allocate(u64 size) {
-    if (data == NULL) {
-        data = (Value*)malloc(sizeof(Value) * size);
-    }
-    else {
-        Value* temp = data;
-        data = (Value*)malloc(sizeof(Value) * size);
-        memcpy(temp, data, allocated);
-        delete[] temp;
-    }
-    allocated = size;
-}
-
-void ArrayValue::push(Value v) {
-    assert(v.GetType() == type);
-
-    if (used >= allocated) {
-        allocate(allocated * 2);
-    }
-
-    data[used++] = v;
-}
-
-void ArrayValue::erase(u64 idx) {
-    assert(idx <= used);
-    memmove(&data[idx], &data[idx + 1], used - idx); // TODO: Confirm this works
-    used--;
-}
-
-Value ArrayValue::at(u64 idx) {
-    assert(idx <= used);
-    return &data[idx];
-}
-
-ArrayValue ArrayValue::slice(u64 start, u64 end) {
-    assert(start < end);
-    assert(end <= used);
-
-    u64 size = end - start;
-
-    ArrayValue result(type, size);
-    memcpy(result.data, &data[start], size);
-
-    return result;
 }
 
 TokenType GetKeyword(std::string text)
@@ -968,7 +763,6 @@ Program ToProgram(Value v) {
     result.push(v.GetType());
 
     switch(v.GetType()) {
-        //case VALUE_ARRAY: { return; } break;
         case VALUE_INT: { result.push(ToProgram(*v.GetInt())); } break;
         case VALUE_REAL: { result.push(ToProgram(*v.GetReal())); } break;
         case VALUE_STR: { result.push(ToProgram(*v.GetStr())); } break;
@@ -1247,15 +1041,12 @@ public:
 };
 
 struct Node;
+struct IdentifierNode;
 struct ScopeNode;
 struct SequenceNode;
 struct BinaryNode;
 struct ValueNode;
-struct ArrayLiteralNode;
 struct VariableDeclNode;
-struct DefaultTypeNode;
-struct ArrayTypeNode;
-struct PtrTypeNode;
 struct AssignmentNode;
 struct FunctionNode;
 struct CallNode;
@@ -1267,22 +1058,15 @@ struct BreakNode;
 struct ContinueNode;
 struct DeferNode;
 struct ImportNode;
-struct AllocNode;
-struct FreeNode;
-struct RefNode;
-struct DerefNode;
 
 struct NodeVisitor
 {
 	virtual void visit(ScopeNode* node) = 0;
+	virtual void visit(IdentifierNode* node) = 0;
 	virtual void visit(SequenceNode* node) = 0;
 	virtual void visit(BinaryNode* node) = 0;
 	virtual void visit(ValueNode* node) = 0;
-    virtual void visit(ArrayLiteralNode* node) = 0;
 	virtual void visit(VariableDeclNode* node) = 0;
-    virtual void visit(DefaultTypeNode* node) = 0;
-    virtual void visit(ArrayTypeNode* node) = 0;
-    virtual void visit(PtrTypeNode* node) = 0;
 	virtual void visit(AssignmentNode* node) = 0;
 	virtual void visit(FunctionNode* node) = 0;
 	virtual void visit(CallNode* node) = 0;
@@ -1294,15 +1078,13 @@ struct NodeVisitor
 	virtual void visit(ContinueNode* node) = 0;
 	virtual void visit(DeferNode* node) = 0;
     virtual void visit(ImportNode* node) = 0;
-    virtual void visit(AllocNode* node) = 0;
-    virtual void visit(FreeNode* node) = 0;
-    virtual void visit(RefNode* node) = 0;
-    virtual void visit(DerefNode* node) = 0;
 };
 
 #define PRINT_FREED_MEMORY false
 struct Node
 {
+    u64 line, location;
+
 	virtual void visit(NodeVisitor* visitor) = 0;
 
     ~Node()
@@ -1321,6 +1103,17 @@ struct ScopeNode : Node
 
 	ScopeNode(Node* statement_)
 		: statement(statement_)
+	{}
+
+	VISIT_
+};
+
+struct IdentifierNode : Node
+{
+    std::string id;
+
+	IdentifierNode(std::string id_)
+		: id(id_)
 	{}
 
 	VISIT_
@@ -1367,25 +1160,14 @@ struct ValueNode : Node
 	VISIT_
 };
 
-struct ArrayLiteralNode : Node {
-    std::vector<Node*> elements;
-
-    ArrayLiteralNode(std::vector<Node*> elements_)
-        : elements(elements_)
-    {}
-
-    VISIT_
-};
-
 struct VariableDeclNode : Node
 {
-	Token id;
-    Node* type, *value;
+    Node *id, *type, *value;
     bool infer;
 
     VariableDeclNode() = default;
 
-    static VariableDeclNode* CreateInferred(Token id_, Node* value_) {
+    static VariableDeclNode* CreateInferred(Node* id_, Node* value_) {
         VariableDeclNode* result = new VariableDeclNode();
 
         result->id = id_;
@@ -1396,49 +1178,18 @@ struct VariableDeclNode : Node
         return result;
     }
 
-	VariableDeclNode(Token id_, Node* type_, Node* value_ = NULL)
+	VariableDeclNode(Node* id_, Node* type_, Node* value_ = NULL)
 		: id(id_), type(type_), value(value_), infer(false)
 	{}
     
 	VISIT_
 };
 
-struct DefaultTypeNode : Node {
-    Token type;
-
-    DefaultTypeNode(Token type_)
-        : type(type_)
-    {}
-
-    VISIT_
-};
-
-struct ArrayTypeNode : Node {
-    Node* type, *size;
-
-    ArrayTypeNode(Node* type_, Node* size_)
-        : type(type_), size(size_)
-    {}
-
-    VISIT_
-};
-
-struct PtrTypeNode : Node {
-    Node* type;
-
-    PtrTypeNode(Node* type_)
-        : type(type_)
-    {}
-
-    VISIT_
-};
-
 struct AssignmentNode : Node
 {
-	Token id;
-    Node* value;
+    Node *id, *value;
 
-	AssignmentNode(Token id_, Node* value_)
+	AssignmentNode(Node* id_, Node* value_)
 		: id(id_), value(value_)
 	{}
 
@@ -1447,11 +1198,10 @@ struct AssignmentNode : Node
 
 struct FunctionNode : Node
 {
-	Token id, returntype;
-	Node* block;
+	Node *id, *returntype, *block;
     std::vector<Node*> args;
 
-	FunctionNode(Token id_, Token returntype_, std::vector<Node*> args_, Node* block_)
+	FunctionNode(Node* id_, Node* returntype_, std::vector<Node*> args_, Node* block_)
 		: id(id_), returntype(returntype_), args(args_), block(block_)
 	{}
 
@@ -1460,10 +1210,10 @@ struct FunctionNode : Node
 
 struct CallNode : Node
 {
-	Token id;
+	Node* id;
     std::vector<Node*> args;
 
-	CallNode(Token id_, std::vector<Node*> args_)
+	CallNode(Node* id_, std::vector<Node*> args_)
 		: id(id_), args(args_)
 	{}
 	VISIT_
@@ -1504,35 +1254,20 @@ struct LoopNode : Node
 
 struct ReturnNode : Node
 {
-    Token id;
-    Node* expr;
+    Node * expr;
 
-    ReturnNode(Token id_, Node* expr_)
-        : id(id_), expr(expr_)
+    ReturnNode(Node* expr_)
+        : expr(expr_)
     {}
 
     VISIT_
 };
 
-struct BreakNode : Node
-{
-    Token id;
-
-    BreakNode(Token id_)
-        : id(id_)
-    {}
-
+struct BreakNode : Node {
     VISIT_
 };
 
-struct ContinueNode : Node
-{
-    Token id;
-
-    ContinueNode(Token id_)
-        : id(id_)
-    {}
-
+struct ContinueNode : Node {
     VISIT_
 };
 
@@ -1548,35 +1283,6 @@ struct ImportNode : Node {
     Node* path;
 
     ImportNode(Token file_, Node* path_) : file(file_), path(path_) {}
-    VISIT_
-};
-
-struct AllocNode : Node {
-    Node* val;
-
-    AllocNode(Node* val_) : val(val_) {}
-
-    VISIT_
-};
-
-struct FreeNode : Node {
-    Token id;
-
-    FreeNode(Token id_) : id(id_) {}
-    VISIT_
-};
-
-struct RefNode : Node {
-    Token id;
-
-    RefNode(Token id_) : id(id_) {}
-    VISIT_
-};
-
-struct DerefNode : Node {
-    Token id;
-
-    DerefNode(Token id_) : id(id_) {}
     VISIT_
 };
 
@@ -1753,7 +1459,7 @@ struct Parser
 
 					Node* block = StatementBlock();
 
-					return new FunctionNode(id, returntype, args_decl, block);
+					return new FunctionNode(new IdentifierNode(id.text), new IdentifierNode(returntype.text), args_decl, block);
 				}
                 else
                 {
@@ -1770,7 +1476,7 @@ struct Parser
             Node* expr = Expression();
             if(AdvanceIfMatch(TOKEN_SEMICOLON))
             {
-                return new ReturnNode(t, expr);
+                return new ReturnNode(expr);
             }
             else
             {
@@ -1781,7 +1487,7 @@ struct Parser
         {
             if(AdvanceIfMatch(TOKEN_SEMICOLON))
             {
-                return new BreakNode(current);
+                return new BreakNode();
             }
             else
             {
@@ -1792,7 +1498,7 @@ struct Parser
         {
             if(AdvanceIfMatch(TOKEN_SEMICOLON))
             {
-                return new ContinueNode(current);
+                return new ContinueNode();
             }
             else
             {
@@ -1814,13 +1520,6 @@ struct Parser
             if (Node* v = Literal(); v != NULL) {
                 if (AdvanceIfMatch(TOKEN_SEMICOLON)) {
                     return new ImportNode(file, v);
-                }
-            }
-        }
-        else if (AdvanceIfMatch(TOKEN_FREE)) {
-            if (Token id = current; AdvanceIfMatch(TOKEN_IDENTIFIER)) {
-                if (AdvanceIfMatch(TOKEN_SEMICOLON)) {
-                    return new FreeNode(id);
                 }
             }
         }
@@ -1880,16 +1579,16 @@ struct Parser
                     Node* value = Expression();
                     if(type != NULL)
                     {
-                        return new VariableDeclNode(id, type, value);
+                        return new VariableDeclNode(new IdentifierNode(id.text), type, value);
                     }
                     else
                     {
-                        return VariableDeclNode::CreateInferred(id, value);
+                        return VariableDeclNode::CreateInferred(new IdentifierNode(id.text), value);
                     }
                 }
                 else
                 {
-                    return new VariableDeclNode(id, type);
+                    return new VariableDeclNode(new IdentifierNode(id.text), type);
                 }
             }
         }
@@ -1905,7 +1604,7 @@ struct Parser
             if(peek().type == TOKEN_EQUAL)
             {
                 advance(2);
-                return new AssignmentNode(id, Expression());
+                return new AssignmentNode(new IdentifierNode(id.text), Expression());
             }
             else if(peek().type == TOKEN_PLUS_EQUAL || 
                     peek().type == TOKEN_MINUS_EQUAL ||
@@ -1924,7 +1623,7 @@ struct Parser
                 }
 
                 Node* binary = new BinaryNode(new ValueNode(id), op, Expression());
-                return new AssignmentNode(id, binary);
+                return new AssignmentNode(new IdentifierNode(id.text), binary);
             }
         }
 
@@ -1950,42 +1649,9 @@ struct Parser
     }
 
     Node* Type() {
-        Token id = current;
-        if(AdvanceIfMatch(TOKEN_PTR)) {
-            Node* type = Type();
-            return new PtrTypeNode(type);
-        }
-        if(AdvanceIfMatch(TOKEN_LEFT_BRACKET)) {
-            Node* type = Type();
-            if(AdvanceIfMatch(TOKEN_COMMA))
-            {
-                Node* size = Expression();
-                if(size == NULL) {
-                    if(AdvanceIfMatch(TOKEN_LIST))
-                    {
-                        size = new ValueNode(Token(TOKEN_LITERAL, "-1"));
-                    }
-                    else
-                    {
-                        LogError("Array size must be a valid expression", id.line, id.location);
-                    }
-                }
-
-                if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
-                {
-                    return new ArrayTypeNode(type, size);
-                }
-                else
-                {
-                    LogError("Array decleration must have a closing bracket", id.line, id.location);
-                }
-            }
-        }
-        else {
-            if(Token type = current; AdvanceIfMatch(TOKEN_IDENTIFIER))
-            {
-                return new DefaultTypeNode(type);
-            }
+        if(Token type = current; AdvanceIfMatch(TOKEN_IDENTIFIER))
+        {
+            return new IdentifierNode(type.text);
         }
 
         return NULL;
@@ -2026,7 +1692,7 @@ struct Parser
             if(arg == NULL)
             {
                 if(current.type == TOKEN_COMMA) {
-                    LogError("Agrgument decleration must precede a comma", current.line, current.location);
+                    LogError("Argument decleration must precede a comma", current.line, current.location);
                     return {};
                 }
 
@@ -2059,7 +1725,7 @@ struct Parser
                 if(current.type == TOKEN_RIGHT_PARENTHESIS)
                 {
                     advance();
-                    return new CallNode(id, arg_list);
+                    return new CallNode(new IdentifierNode(id.text), arg_list);
                 }
                 else
                 {
@@ -2141,42 +1807,6 @@ struct Parser
 
             advance();
             return new ValueNode(t, VALUE_ID);
-        }
-        else if(AdvanceIfMatch(TOKEN_LEFT_BRACKET))
-        {
-            std::vector<Node*> values;
-
-            values.push_back(Expression());
-            while (AdvanceIfMatch(TOKEN_COMMA)) {
-                values.push_back(Expression());
-            }
-
-            if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET))
-            {
-                return new ArrayLiteralNode(values);
-            }
-        }
-        else if (AdvanceIfMatch(TOKEN_ALLOC)) {
-            if(Node* expr = Expression(); expr != NULL) {
-                return new AllocNode(expr);
-            }
-            else {
-                LogError("Cannot allocate invalid expression", current.line, current.location);
-            }
-        }
-        else if (AdvanceIfMatch(TOKEN_REF)) {
-            t = current;
-            if (AdvanceIfMatch(TOKEN_IDENTIFIER))
-            {
-                return new RefNode(t);
-            }
-        }
-        else if (AdvanceIfMatch(TOKEN_DEREF)) {
-            t = current;
-            if (AdvanceIfMatch(TOKEN_IDENTIFIER))
-            {
-                return new DerefNode(t);
-            }
         }
 
         return NULL;
@@ -2264,48 +1894,6 @@ private:
 
     std::string sourcepath;
 
-    auto GetFullType()
-    {
-        std::vector<Value> result;
-        while(stack.top().GetType() == VALUE_PTR ||
-              stack.top().GetType() == VALUE_ARRAY)
-        {
-            result.push_back(stack.top()); stack.pop();
-        }
-        result.push_back(stack.top()); stack.pop();
-        return result;
-    }
-
-    bool CompareValueTypes(std::function<void(std::vector<Value> l, std::vector<Value> r)> error = {})
-    {
-        std::vector<Value> rarr = GetFullType();
-        std::vector<Value> larr = GetFullType();
-
-        bool success = true;
-        for(int i = 0; i < larr.size(); i++)
-        {
-            Value l = larr.at(i);
-            Value r = rarr.at(i);
-
-            if(l.IsPtr() && r.IsInt()) {
-                break;
-            }
-            else if(l.GetType() == r.GetType()) {
-                continue;
-            }
-            else {
-                success = false;
-            }
-
-        }
-
-        if (!success) {
-            std::invoke(error, larr, rarr);
-        }
-
-        return success;
-    }
-
 	void NewCurrent()
 	{
 		if (current == NULL) return;
@@ -2360,52 +1948,19 @@ public:
 		}
 	}
 
+    void visit(IdentifierNode* node) {
+        stack.push(Value(VALUE_ID, node->id));
+    }
+
 	void visit(BinaryNode* node)
 	{
 		node->left->visit(this);
 		node->right->visit(this);
 
-        std::vector<Value> rarr = GetFullType();
-        std::vector<Value> larr = GetFullType();
+        Value r = stack.top(); stack.pop();
+        Value l = stack.top(); stack.pop();
 
-        if(larr.front().IsArray())
-        {
-            switch(node->op.type)
-            {
-                case TOKEN_PLUS:
-                case TOKEN_MINUS:
-                case TOKEN_EQUAL_EQUAL:
-                case TOKEN_NOT_EQUAL:
-                {
-
-                } break;
-                default:
-                {
-                    LogError("Invalid operator operation on an array", larr.front().GetLine(), larr.front().GetLoc());
-                } break;
-            }
-        }
-        else if(larr.front().IsPtr() && rarr.front().IsInt()) {
-            switch(node->op.type)
-            {
-                case TOKEN_PLUS:
-                case TOKEN_MINUS:
-                case TOKEN_EQUAL_EQUAL:
-                case TOKEN_NOT_EQUAL:
-                case TOKEN_LESS:
-                case TOKEN_GREATER:
-                case TOKEN_LESS_EQUAL:
-                case TOKEN_GREATER_EQUAL:
-                {
-                } break;
-
-                default:
-                {
-                    LogError("Invalid operator operation on a ptr", larr.front().GetLine(), larr.front().GetLoc());
-                } break;
-            }
-        }
-        else if(larr.front().IsStr() && rarr.front().IsStr()) {
+        if(l.IsStr() && r.IsStr()) {
             switch(node->op.type)
             {
                 case TOKEN_PLUS:
@@ -2416,20 +1971,20 @@ public:
                 } break;
                 default:
                 {
-                    LogError("Invalid operator operation on a string", larr.front().GetLine(), larr.front().GetLoc());
+                    LogError("Invalid operator operation on a string", l.GetLine(), l.GetLoc());
                 } break;
             }
         }
-        else if (larr.front().GetType() != rarr.front().GetType()) {
-            LogError("Cannot perform a binary operation on \'" + std::to_string(larr.front().GetType()) + "\' and \'" + std::to_string(rarr.front().GetType()) + "\'", larr.front().GetLine(), larr.front().GetLoc());
+        else if (l.GetType() != r.GetType()) {
+            LogError("Cannot perform a binary operation on \'" + std::to_string(l.GetType()) + "\' and \'" + std::to_string(r.GetType()) + "\'", node->line, node->location);
         }
 
         if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_OR))
         {
-            larr.back() = true;
+            l = true;
         }
 
-        stack.push(larr.back());
+        stack.push(l);
 	}
 
 	void visit(ValueNode* node)
@@ -2451,34 +2006,12 @@ public:
         stack.push(v);
     }
 
-    void visit(ArrayLiteralNode* node)
-    {
-        std::vector<Value> expectedtype;
-        for(u64 i = 0; i < node->elements.size(); i++)
-        {
-            auto&& item = node->elements.at(i);
-            item->visit(this);
-
-            auto type = GetFullType();
-
-            if (i == 0) expectedtype = type;
-
-            stack.push(expectedtype.back());
-            stack.push(type.back());
-
-            CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                LogError("Array literal expects type \'" + std::to_string(l.back().GetType()) + "\' instead it got \'" + std::to_string(r.back().GetType()) + "\'");
-            });
-        }
-
-        stack.push(expectedtype.back());
-        stack.push(VALUE_ARRAY);
-    }
-
 	void visit(VariableDeclNode* node)
 	{
-        if(current->VariableExists(node->id.text)) {
-            LogError("Variable already exist's with name '" + node->id.text + "' within the current scope", node->id.line, node->id.location);
+        node->id->visit(this);
+        Value id = stack.top(); stack.pop();
+        if(current->VariableExists(*id.GetId())) {
+            LogError("Variable already exist's with name '" + *id.GetId() + "' within the current scope", node->line, node->location);
             return;
         }
 
@@ -2487,17 +2020,18 @@ public:
             node->value->visit(this);
             Value value = stack.top(); stack.pop();
             vartype = value.GetType();
-            node->type = new DefaultTypeNode(Token(GetKeyword(value.GetTypeAsString())));
+            node->type = new IdentifierNode(value.GetTypeAsString());
         }
         else {
             if(node->value != NULL)
             {
                 node->value->visit(this);
                 node->type->visit(this);
-                vartype = stack.top().GetType();
-                CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                    LogError("Cannot assign '" + std::to_string(r.back().GetType()) + "' to '" + std::to_string(l.back().GetType()) + "'", node->id.line, node->id.location);
-                });
+                vartype = stack.top().GetType(); stack.pop();
+                ValueType valuetype = stack.top().GetType(); stack.pop();
+                if(vartype != valuetype) {
+                    LogError("Cannot assign '" + std::to_string(vartype) + "' to '" + std::to_string(valuetype) + "'", node->line, node->location);
+                }
             }
             else {
                 node->type->visit(this);
@@ -2505,39 +2039,25 @@ public:
             }
         }
 
-        current->SetType(node->id.text, vartype);
+        current->SetType(*id.GetId(), vartype);
         if(is_arg) stack.push(vartype);
 	}
 
-    void visit(DefaultTypeNode* node)
-    {
-        stack.push(StringToValueType(node->type.text));
-    }
-
-    void visit(ArrayTypeNode* node)
-    {
-        node->type->visit(this);
-        stack.push(VALUE_ARRAY);
-    }
-
-    void visit(PtrTypeNode* node) {
-        node->type->visit(this);
-        stack.push(VALUE_PTR);
-    }
-
 	void visit(AssignmentNode* node)
 	{
-        if(!current->VariableExists(node->id.text)) {
-            LogError("Cannot assign to '" + node->id.text + "' since it doesn't exist within the current scope", node->id.line, node->id.location);
+        node->id->visit(this);
+        Value id = stack.top(); stack.pop();
+        if(!current->VariableExists(*id.GetId())) {
+            LogError("Cannot assign to '" + *id.GetId() + "' since it doesn't exist within the current scope", node->line, node->location);
             return;
         }
 
-        Value var = current->FindType(node->id.text);
-        stack.push(var);
+        Value var = current->FindType(*id.GetId());
         node->value->visit(this);
-        CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-            LogError("Cannot assign '" + r.back().GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->id.line, node->id.location);
-        });
+        Value val = stack.top(); stack.pop();
+        if(var.GetType() != val.GetType()) {
+            LogError("Cannot assign '" + val.GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->line, node->location);
+        }
 	}
 
 	void visit(FunctionNode* node)
@@ -2554,8 +2074,13 @@ public:
         }
         is_arg = false;
 
-        returntype = StringToValueType(node->returntype.text);
-        current->parent->SetFunction(node->id.text, FunctionData(returntype, args));
+        node->id->visit(this);
+        Value id = stack.top(); stack.pop();
+        
+        node->returntype->visit(this);
+        Value returnval = stack.top(); stack.pop();
+
+        current->parent->SetFunction(*id.GetId(), FunctionData(StringToValueType(*returnval.GetId()), args));
 
         got_return = false;
 
@@ -2563,8 +2088,8 @@ public:
         node->block->visit(this);
         in_func = false;
 
-        if(returntype != VALUE_NONE && !got_return) {
-            LogError("Function '" + node->id.text + "' expect's an '" + node->returntype.text + "' to be returned, but never get's one.");
+        if(returnval.GetType() != VALUE_NONE && !got_return) {
+            LogError("Function '" + *id.GetId() + "' expect's an '" + *returnval.GetId() + "' to be returned, but never get's one.");
             // TODO: Check if all code path's return a value.
         }
 
@@ -2573,7 +2098,10 @@ public:
 
 	void visit(CallNode* node)
 	{
-        auto func = current->FindFunction(node->id.text);
+        node->id->visit(this);
+        Value id = stack.top(); stack.pop();
+
+        auto func = current->FindFunction(*id.GetId());
         if(func)
         {
             if(node->args.size() == func->args.size())
@@ -2581,17 +2109,15 @@ public:
                 for(int i = 0; i < node->args.size(); i++)
                 {
                     node->args[i]->visit(this);
+                    Value given = stack.top(); stack.pop();
                     Value declared = func->args.at(i);
 
                     if(declared.GetType() == VALUE_ANY) {
-                        auto temp = GetFullType();
                     }
                     else {
-                        stack.push(declared);
-
-                        CompareValueTypes([&](std::vector<Value> l, std::vector<Value> r) {
-                            LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + l.back().GetTypeAsString() + "'", l.back().GetLine(), l.back().GetLoc());
-                        });
+                        if(declared.GetType() != given.GetType()) {
+                            LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + given.GetTypeAsString() + "'", node->line, node->location);
+                        }
                     }
                 }
 
@@ -2599,12 +2125,12 @@ public:
             }
             else
             {
-                LogError("Invalid arg's size: Expected '" + std::to_string(func->args.size()) + "'", node->id.line, node->id.location);
+                LogError("Invalid arg's size: Expected '" + std::to_string(func->args.size()) + "'", node->line, node->location);
             }
         }
         else
         {
-            LogError("Function '" + node->id.text + "' does not exist within the current scope", node->id.line, node->id.location);
+            LogError("Function '" + *id.GetId() + "' does not exist within the current scope", node->line, node->location);
         }
 	}
 
@@ -2644,7 +2170,7 @@ public:
     {
         if(!in_func)
         {
-            LogError("Return statement must be in a function", node->id.line, node->id.location);
+            LogError("Return statement must be in a function", node->line, node->location);
         }
 
         ValueType rtype = VALUE_NONE;
@@ -2655,7 +2181,7 @@ public:
 
         if(returntype != rtype)
         {
-            LogError("Returned type '" + std::to_string(rtype) + "' is different as expected '" + std::to_string(returntype) + "'", node->id.line, node->id.location);
+            LogError("Returned type '" + std::to_string(rtype) + "' is different as expected '" + std::to_string(returntype) + "'", node->line, node->location);
         }
 
         got_return = true;
@@ -2665,7 +2191,7 @@ public:
     {
         if(!in_loop)
         {
-            LogError("Break statement must be in a loop", node->id.line, node->id.location);
+            LogError("Break statement must be in a loop", node->line, node->location);
         }
     }
 
@@ -2673,7 +2199,7 @@ public:
     {
         if(!in_loop)
         {
-            LogError("Continue statement must be in a loop", node->id.line, node->id.location);
+            LogError("Continue statement must be in a loop", node->line, node->location);
         }
     }
 
@@ -2707,32 +2233,6 @@ public:
             return;
         }
     }
-
-    void visit(AllocNode* node) {
-        node->val->visit(this);
-        stack.push(VALUE_PTR);
-    }
-
-    void visit(FreeNode* node) {
-        if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot free a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
-            return;
-        }
-    }
-
-    void visit(RefNode* node) {
-        if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot get a reference to a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
-            return;
-        }
-    }
-
-    void visit(DerefNode* node) {
-        if (!current->VariableExists(node->id.text)) {
-            LogError("Cannot dereference a variable that doesn't exist: \'" + node->id.text + "\'", node->id.line, node->id.location);
-            return;
-        }
-    }
 };
 
 struct NodeFreeVisitor : NodeVisitor {
@@ -2741,6 +2241,8 @@ struct NodeFreeVisitor : NodeVisitor {
         node->statement->visit(this);
         delete node->statement;
     }
+
+    void visit(IdentifierNode* node) {}
 
 	void visit(SequenceNode* node)
 	{
@@ -2763,18 +2265,10 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(ValueNode* node) {}
 
-    void visit(ArrayLiteralNode* node)
-    {
-        for (auto&& n : node->elements) {
-            n->visit(this);
-            delete n;
-        }
-
-        node->elements.clear();
-    }
-
 	void visit(VariableDeclNode* node)
     {
+        delete node->id;
+
         if(node->type != NULL)
         {
             node->type->visit(this);
@@ -2788,31 +2282,17 @@ struct NodeFreeVisitor : NodeVisitor {
         }
     }
 
-    void visit(DefaultTypeNode* node) {}
-
-    void visit(ArrayTypeNode* node)
-    {
-        node->type->visit(this);
-        delete node->type;
-
-        node->size->visit(this);
-        delete node->size;
-    }
-
-    void visit(PtrTypeNode* node)
-    {
-        node->type->visit(this);
-        delete node->type;
-    }
-
 	void visit(AssignmentNode* node)
 	{
+        delete node->id;
         node->value->visit(this);
         delete node->value;
 	}
 
 	void visit(FunctionNode* node)
 	{
+        delete node->id;
+
 		for (auto&& n : node->args)
 		{
 			n->visit(this);
@@ -2827,6 +2307,8 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(CallNode* node)
 	{
+        delete node->id;
+
 		for (auto&& n : node->args)
 		{
 			n->visit(this);
@@ -2880,11 +2362,6 @@ struct NodeFreeVisitor : NodeVisitor {
     {
         delete node->path;
     }
-
-    void visit(AllocNode* node) {}
-    void visit(FreeNode* node) {}
-    void visit(RefNode* node) {}
-    void visit(DerefNode* node) {}
 };
 
 enum OpcodeType : u8
@@ -2904,11 +2381,6 @@ enum OpcodeType : u8
     OPCODE_COMP_EQUAL, OPCODE_COMP_NOT_EQUAL,
 
     OPCODE_COMP_AND, OPCODE_COMP_OR,
-
-    OPCODE_STORE_ARRAY, OPCODE_STORE_ARRAY_INDEX, OPCODE_LOAD_ARRAY_INDEX,
-
-    OPCODE_STORE_PTR, OPCODE_LOAD_PTR,
-    OPCODE_ALLOC, OPCODE_FREE,
 
     OPCODE_START_DEFER, OPCODE_EXEC_DEFER,
 
@@ -2938,18 +2410,9 @@ std::map<OpcodeType,u64> OpcodeArgTable = {
     { OPCODE_COMP_NOT_EQUAL, 0 },
     { OPCODE_COMP_AND, 0 },
     { OPCODE_COMP_OR, 0 },
-    { OPCODE_STORE_ARRAY, 1 },
-    { OPCODE_STORE_ARRAY_INDEX, 1 },
-    { OPCODE_LOAD_ARRAY_INDEX, 1 },
-
-    { OPCODE_STORE_PTR, 0 },
-    { OPCODE_LOAD_PTR, 0 },
-    { OPCODE_ALLOC, 0 },
-    { OPCODE_FREE, 0 },
 
     { OPCODE_START_DEFER, 1 },
     { OPCODE_EXEC_DEFER, 1 },
-
 };
 
 u64 GetOpcodeArgC(OpcodeType op) {
@@ -3022,91 +2485,6 @@ struct Environment
 	}
 };
 
-class MemoryArena {
-private:
-   Value* mem = NULL;
-   u64 used = 0, allocated = 0;
-
-   struct FreeMem {
-       Value* loc;
-       u64 size;
-   };
-   std::vector<FreeMem> freestack;
-
-   static constexpr u64 defaultSize = 10000;
-
-   void resize(u64 size) {
-       allocated += size;
-       Value* newMem = new Value[allocated];
-       if(mem != NULL) {
-           memcpy(mem, newMem, used);
-           delete[] mem;
-       }
-       mem = newMem;
-   }
-public:
-   MemoryArena() {
-       allocated = defaultSize;
-       resize(0);
-   }
-
-   ~MemoryArena() {
-       delete[] mem;
-   }
-
-   Value* At(PtrValue* v) {
-       assert(v->ptr != NULL);
-       assert(v->ptr >= mem &&
-              v->ptr + v->size <= mem + allocated);
-
-       // TODO: Check this works
-       for(auto&& freeMem : freestack) {
-           if(v->ptr == freeMem.loc->GetPtr()->ptr) {
-               LogError("Cannot access freed memory");
-               return NULL;
-           }
-       }
-
-       return v->ptr;
-   }
-
-   PtrValue Alloc(u64 size) {
-       for(int i = 0; i < freestack.size(); i++) {
-           FreeMem freed = freestack.at(i);
-           if(freed.size >= size) {
-               u64 left = freed.size - size;
-               freestack.erase(freestack.begin() + i);
-
-               if(size > 0) {
-                   FreeMem f = {
-                       freed.loc + size,
-                       left
-                   };
-                   freestack.push_back(f);
-               }
-
-               return PtrValue(freed.loc, size); 
-           }
-       }
-
-       used += size;
-
-       if(used > allocated) {
-           resize(allocated * 1.5);
-       }
-
-       return PtrValue(mem + used, size); 
-   }
-
-   void Free(PtrValue value) {
-       FreeMem f = {
-           value.ptr,
-           value.size
-       };
-       freestack.push_back(f);
-   }
-};
-
 class VirtualMachine
 {
 private:
@@ -3118,7 +2496,6 @@ private:
     std::map<std::string,u64> jumpTable;
 
 	Environment env;
-    MemoryArena memory;
 
     std::map<std::string,IntrinsicFunction> intrinsics;
 public:
@@ -3179,10 +2556,6 @@ public:
     Value decodeConstant(Program& p, u64& pc) {
         u8 type = GetByte(p, pc);
         switch(type) {
-            case VALUE_ARRAY:
-            {
-
-            } break;
             case VALUE_INT:
             {
                 u8 properties = GetByte(p, pc);
@@ -3429,11 +2802,6 @@ public:
                     Value result = *l.GetReal() + *r.GetReal();
                     stack.push(result);
                 }
-                else if(l.IsPtr() && r.IsInt())
-                {
-                    Value result = l.GetPtr()->ptr + *r.GetInt();
-                    stack.push(result);
-                }
                 else if(l.IsStr() && r.IsStr()) {
                     Value result = QuoteStr(l.GetStrUnqouted() + r.GetStrUnqouted());
                     stack.push(result);
@@ -3452,12 +2820,6 @@ public:
                 else if(l.IsReal())
                 {
                     Value result = *l.GetReal() - *r.GetReal();
-                    stack.push(result);
-                }
-                else if(l.IsPtr() && r.IsInt())
-                {
-                    Value result = *l.GetPtr();
-                    result.GetPtr()->ptr -= *r.GetInt();
                     stack.push(result);
                 }
             } break;
@@ -3616,67 +2978,6 @@ public:
                 stack.push(result);
             } break;
 
-            case OPCODE_STORE_ARRAY:
-            {
-                Value arg = decodeConstant(p, pc);
-                Value size = stack.top(); stack.pop();
-
-                std::string name = *arg.GetId();
-
-                Value arr;
-
-                auto id = env.FindIdentifier(name);
-                if(id) {
-                    env.SetIdentifier(name, arr);
-                }
-                else {
-                    env.CreateIdentifier(name);
-                    env.SetIdentifier(name, arr);
-                }
-            } break;
-            case OPCODE_STORE_ARRAY_INDEX:
-            {
-                Value arg = decodeConstant(p, pc);
-                Value idx = stack.top(); stack.pop();
-
-                std::string name = *arg.GetId();
-            } break;
-            case OPCODE_LOAD_ARRAY_INDEX:
-            {
-                Value arg = decodeConstant(p, pc);
-                Value idx = stack.top(); stack.pop();
-
-                std::string name = *arg.GetId();
-            } break;
-
-            case OPCODE_STORE_PTR:
-            {
-                Value ptr = stack.top(); stack.pop();
-                Value value = stack.top(); stack.pop();
-
-                *memory.At(ptr.GetPtr()) = value;
-
-                stack.push(ptr);
-            } break;
-            case OPCODE_LOAD_PTR:
-            {
-                Value ptr = stack.top(); stack.pop();
-                stack.push(*memory.At(ptr.GetPtr()));
-            } break;
-            case OPCODE_ALLOC:
-            {
-                Value value = stack.top(); stack.pop();
-                PtrValue ptr = memory.Alloc(value.GetSize());
-
-                *memory.At(&ptr) = value;
-                stack.push(ptr);
-            } break;
-            case OPCODE_FREE:
-            {
-                Value value = stack.top(); stack.pop();
-                memory.Free(*value.GetPtr());
-            } break;
-
             case OPCODE_START_DEFER:
             {
                 u64 current_pc = pc;
@@ -3748,19 +3049,8 @@ public:
             case OPCODE_COMP_AND: { result = "COMP_AND"; } break;
             case OPCODE_COMP_OR: { result = "COMP_OR"; } break;
 
-            case OPCODE_STORE_ARRAY: { result = "STORE_ARRAY"; } break;
-            case OPCODE_STORE_ARRAY_INDEX: { result = "STORE_ARRAY_INDEX"; } break;
-            case OPCODE_LOAD_ARRAY_INDEX: { result = "LOAD_ARRAY_INDEX"; } break;
-
-            case OPCODE_STORE_PTR: { result = "STORE_PTR"; } break;
-            case OPCODE_LOAD_PTR: { result = "LOAD_PTR"; } break;
-            case OPCODE_ALLOC: { result = "ALLOC"; } break;
-            case OPCODE_FREE: { result = "FREE"; } break;
             case OPCODE_START_DEFER: { result = "START_DEFER"; } break;
             case OPCODE_EXEC_DEFER: { result = "EXEC_DEFER"; } break;
-
-            case TOKEN_ALLOC: { result = "ALLOC"; } break;
-            case TOKEN_FREE: { result = "FREE"; } break;
 
             default: { result = "INVALID OPCODE"; } break;
         }
@@ -3815,6 +3105,12 @@ struct BytecodeEmitter : NodeVisitor
         }
 	}
 
+    void visit(IdentifierNode* node)
+    {
+        program.push(Value(VALUE_ID, node->id));
+        previous_id = node->id;
+    }
+
 	void visit(BinaryNode* node)
 	{
         node->left->visit(this);
@@ -3860,10 +3156,6 @@ struct BytecodeEmitter : NodeVisitor
         }
     }
 
-    void visit(ArrayLiteralNode* node)
-    {
-    }
-
 	void visit(VariableDeclNode* node)
 	{
         if (node->value != NULL)
@@ -3877,34 +3169,20 @@ struct BytecodeEmitter : NodeVisitor
         }
 
         node->type->visit(this);
-        program.push(Value(node->id.text));
-        previous_id = node->id.text;
 	}
-
-    void visit(DefaultTypeNode* node) {
-        program.push(OPCODE_STORE);
-    }
-
-    void visit(ArrayTypeNode* node) {
-        program.push(OPCODE_STORE_ARRAY);
-    }
-
-    void visit(PtrTypeNode* node) {
-        program.push(OPCODE_STORE);
-    }
 
 	void visit(AssignmentNode* node)
 	{
         node->value->visit(this);
         program.push(OPCODE_STORE);
-        program.push(Value(VALUE_ID, node->id.text));
+        node->id->visit(this);
 	}
 
     std::string previous_id = "";
 	void visit(FunctionNode* node)
 	{
         program.push(OPCODE_START_SUBROUTINE);
-        program.push(Value(node->id.text));
+        node->id->visit(this);
         i64 start = program.size();
         program.push(Value((i64)0));
 
@@ -3929,7 +3207,7 @@ struct BytecodeEmitter : NodeVisitor
         }
 
         program.push(OPCODE_JUMP_SUBROUTINE);
-        program.push(Value(node->id.text));
+        node->id->visit(this);
 	}
 
 	void visit(IfNode* node)
@@ -3937,7 +3215,6 @@ struct BytecodeEmitter : NodeVisitor
         node->cond->visit(this);
         if(node->elseblock == NULL)
         {
-
             program.push(OPCODE_JUMP_IF_FALSE);
             i64 start = program.size();
             program.push(Value((i64)0));
@@ -4060,26 +3337,6 @@ struct BytecodeEmitter : NodeVisitor
     }
 
     void visit(ImportNode* node) {
-    }
-
-    void visit(AllocNode* node) {
-        node->val->visit(this);
-        program.push(OPCODE_ALLOC);
-    }
-
-    void visit(FreeNode* node) {
-        program.push(OPCODE_LOAD);
-        program.push(Value(node->id.text));
-
-        program.push(OPCODE_FREE);
-    }
-
-    void visit(RefNode* node) {
-        // TODO: Implement this
-    }
-
-    void visit(DerefNode* node) {
-        // TODO: Implement this
     }
 };
 
