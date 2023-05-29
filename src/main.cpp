@@ -1087,7 +1087,7 @@ struct Node
 
 	virtual void visit(NodeVisitor* visitor) = 0;
 
-    ~Node()
+    virtual ~Node()
 	{
 #if PRINT_FREED_MEMORY
 		std::cout << "Freed memory " << this << '\n';
@@ -1622,7 +1622,7 @@ struct Parser
                     case TOKEN_DIVIDE_EQUAL: op.type = TOKEN_DIVIDE; break;
                 }
 
-                Node* binary = new BinaryNode(new ValueNode(id), op, Expression());
+                Node* binary = new BinaryNode(new IdentifierNode(id.text), op, Expression());
                 return new AssignmentNode(new IdentifierNode(id.text), binary);
             }
         }
@@ -1796,17 +1796,8 @@ struct Parser
             Node* func_call = FunctionCall();
             if(func_call != NULL) return func_call;
 
-            if(AdvanceIfMatch(TOKEN_LEFT_BRACKET)) {
-                Token idx = current;
-                if(idx.type == TOKEN_LITERAL) {
-                    if(AdvanceIfMatch(TOKEN_RIGHT_BRACKET)) {
-                        return new ValueNode(t/*, idx*/);
-                    }
-                }
-            }
-
             advance();
-            return new ValueNode(t, VALUE_ID);
+            return new IdentifierNode(t.text);
         }
 
         return NULL;
@@ -1952,6 +1943,23 @@ public:
         stack.push(Value(VALUE_ID, node->id));
     }
 
+    ValueType GetType(Value& val) {
+        switch(val.GetType()) {
+            case VALUE_ID:
+                if(!current->VariableExists(*val.GetId())) {
+                LogError("Variable '" + *val.GetId() + "' does not exist within the current expression", val.GetLine(), val.GetLoc());
+                    return VALUE_NONE;
+                }
+
+                return current->FindType(*val.GetId());
+                break;
+            default:
+                return val.GetType();
+        }
+    
+        return VALUE_NONE;
+    }
+
 	void visit(BinaryNode* node)
 	{
 		node->left->visit(this);
@@ -1960,7 +1968,7 @@ public:
         Value r = stack.top(); stack.pop();
         Value l = stack.top(); stack.pop();
 
-        if(l.IsStr() && r.IsStr()) {
+        if(GetType(l) == VALUE_STR && GetType(r) == VALUE_STR) {
             switch(node->op.type)
             {
                 case TOKEN_PLUS:
@@ -1975,8 +1983,8 @@ public:
                 } break;
             }
         }
-        else if (l.GetType() != r.GetType()) {
-            LogError("Cannot perform a binary operation on \'" + std::to_string(l.GetType()) + "\' and \'" + std::to_string(r.GetType()) + "\'", node->line, node->location);
+        else if (GetType(l) != GetType(r)) {
+            LogError("Cannot perform a binary operation on \'" + std::to_string(GetType(l)) + "\' and \'" + std::to_string(GetType(r)) + "\'", node->line, node->location);
         }
 
         if(!(node->op.type < TOKEN_EQUAL_EQUAL || node->op.type > TOKEN_OR))
@@ -1991,16 +1999,8 @@ public:
     {
         Value v(node->token);
 
-        if(v.GetType() == VALUE_ID) {
-            if(current->VariableExists(node->token.text)) {
-                v.GetType() = current->FindType(node->token.text);
-            } else {
-                LogError("Variable '" + node->token.text + "' does not exist within the current scope", node->token.line, node->token.location);
-            }
-        }
-
         if(assignmentType != VALUE_NONE) {
-            assignmentType = v.GetType();
+            assignmentType = GetType(v);
         }
 
         stack.push(v);
@@ -2019,7 +2019,7 @@ public:
         if(node->infer) {
             node->value->visit(this);
             Value value = stack.top(); stack.pop();
-            vartype = value.GetType();
+            vartype = GetType(value);
             node->type = new IdentifierNode(value.GetTypeAsString());
         }
         else {
@@ -2027,15 +2027,15 @@ public:
             {
                 node->value->visit(this);
                 node->type->visit(this);
-                vartype = stack.top().GetType(); stack.pop();
-                ValueType valuetype = stack.top().GetType(); stack.pop();
+                vartype = GetType(stack.top()); stack.pop();
+                ValueType valuetype = GetType(stack.top()); stack.pop();
                 if(vartype != valuetype) {
                     LogError("Cannot assign '" + std::to_string(vartype) + "' to '" + std::to_string(valuetype) + "'", node->line, node->location);
                 }
             }
             else {
                 node->type->visit(this);
-                vartype = stack.top().GetType();
+                vartype = GetType(stack.top());
             }
         }
 
@@ -2055,7 +2055,7 @@ public:
         Value var = current->FindType(*id.GetId());
         node->value->visit(this);
         Value val = stack.top(); stack.pop();
-        if(var.GetType() != val.GetType()) {
+        if(GetType(var) != GetType(val)) {
             LogError("Cannot assign '" + val.GetTypeAsString() + "' to '" + var.GetTypeAsString() + "'", node->line, node->location);
         }
 	}
@@ -2070,7 +2070,7 @@ public:
         {
             arg->visit(this);
             Value argtype = stack.top(); stack.pop();
-            args.push_back(argtype.GetType());
+            args.push_back(GetType(argtype));
         }
         is_arg = false;
 
@@ -2083,7 +2083,7 @@ public:
             returnval = stack.top(); stack.pop();
         }
 
-        current->parent->SetFunction(*id.GetId(), FunctionData(returnval.GetType(), args));
+        current->parent->SetFunction(*id.GetId(), FunctionData(GetType(returnval), args));
 
         got_return = false;
 
@@ -2091,7 +2091,7 @@ public:
         node->block->visit(this);
         in_func = false;
 
-        if(returnval.GetType() != VALUE_NONE && !got_return) {
+        if(GetType(returnval) != VALUE_NONE && !got_return) {
             LogError("Function '" + *id.GetId() + "' expect's an '" + *returnval.GetId() + "' to be returned, but never get's one.");
             // TODO: Check if all code path's return a value.
         }
@@ -2115,10 +2115,10 @@ public:
                     Value given = stack.top(); stack.pop();
                     Value declared = func->args.at(i);
 
-                    if(declared.GetType() == VALUE_ANY) {
+                    if(GetType(declared) == VALUE_ANY) {
                     }
                     else {
-                        if(declared.GetType() != given.GetType()) {
+                        if(GetType(declared) != GetType(given)) {
                             LogError("Argument " + std::to_string(i + 1) + " expect '" + declared.GetTypeAsString() + "' but got '" + given.GetTypeAsString() + "'", node->line, node->location);
                         }
                     }
@@ -2179,7 +2179,7 @@ public:
         ValueType rtype = VALUE_NONE;
         if(node->expr != NULL) {
              node->expr->visit(this);
-             rtype = stack.top().GetType(); stack.pop();
+             rtype = GetType(stack.top()); stack.pop();
         }
 
         if(returntype != rtype)
@@ -2270,6 +2270,7 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(VariableDeclNode* node)
     {
+        node->id->visit(this);
         delete node->id;
 
         if(node->type != NULL)
@@ -2287,6 +2288,7 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(AssignmentNode* node)
 	{
+        node->id->visit(this);
         delete node->id;
         node->value->visit(this);
         delete node->value;
@@ -2294,6 +2296,7 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(FunctionNode* node)
 	{
+        node->id->visit(this);
         delete node->id;
 
 		for (auto&& n : node->args)
@@ -2310,6 +2313,7 @@ struct NodeFreeVisitor : NodeVisitor {
 
 	void visit(CallNode* node)
 	{
+        node->id->visit(this);
         delete node->id;
 
 		for (auto&& n : node->args)
@@ -3146,17 +3150,9 @@ struct BytecodeEmitter : NodeVisitor
     {
         Value value(node->type, node->token.text);
 
-        if(value.IsId())
-        {
-            program.push(OPCODE_LOAD);
-            program.push(value);
-        }
-        else
-        {
-            if(node->negative) value.Negative();
-            program.push(OPCODE_PUSH);
-            program.push(value);
-        }
+        if(node->negative) value.Negative();
+        program.push(OPCODE_PUSH);
+        program.push(value);
     }
 
 	void visit(VariableDeclNode* node)
@@ -3170,8 +3166,6 @@ struct BytecodeEmitter : NodeVisitor
             program.push(OPCODE_PUSH);
             program.push(Value((i64)0));
         }
-
-        node->type->visit(this);
 	}
 
 	void visit(AssignmentNode* node)
@@ -3381,6 +3375,18 @@ struct PrettyPrinter : NodeVisitor {
                 break;
 			case TOKEN_MULTIPLY:
                 std::cout << '*';
+                break;
+            case TOKEN_LESS:
+                std::cout << '<';
+                break;
+            case TOKEN_LESS_EQUAL:
+                std::cout << "<=";
+                break;
+            case TOKEN_GREATER:
+                std::cout << '>';
+                break;
+            case TOKEN_GREATER_EQUAL:
+                std::cout << ">=";
                 break;
         }
         std::cout << ' ';
@@ -3744,6 +3750,10 @@ void IntrinsicToString(VirtualMachine& vm)
     vm.stack.push('"' + result + '"');
 }
 
+bool useAstPrinter = false;
+bool usePrettyPrinter = false;
+bool useBytecodePrinter = false;
+
 int CompileSourceFile(std::string path) {
     auto source = LoadEntireFileIntoString(path);
 
@@ -3795,23 +3805,30 @@ int CompileSourceFile(std::string path) {
         parser.tree->visit(&tcv);
         if (error) return 1;
 
-        PrettyPrinter pp;
-        parser.tree->visit(&pp);
-        if (error) return 1;
+        if(usePrettyPrinter) {
+            PrettyPrinter pp;
+            parser.tree->visit(&pp);
+            if (error) return 1;
+        }
 
-        AstPrinter ap;
-        parser.tree->visit(&ap);
-        if (error) return 1;
+        if(useAstPrinter) {
+            AstPrinter ap;
+            parser.tree->visit(&ap);
+            if (error) return 1;
+        }
 
         BytecodeEmitter bce;
         parser.tree->visit(&bce);
         if (error) return 1;
 
-        vm.PrintProgram(bce.program);
-        vm.RunProgram(bce.program);
-        if (error) return 1;
+        if(useBytecodePrinter) {
+            vm.PrintProgram(bce.program);
+            if (error) return 1;
+        }
 
-        WriteProgramToFile("test.kasm", bce.program);
+        //vm.RunProgram(bce.program);
+
+        //WriteProgramToFile("test.kasm", bce.program);
 
         NodeFreeVisitor nfv;
         parser.tree->visit(&nfv);
@@ -3830,13 +3847,35 @@ int CompileSourceFile(std::string path) {
 }
 
 int main(int argc, char** argv) {
+    std::string sourceFile = "";
     for (int i = 1; i < argc; i++) {
         std::string in = argv[i];
 
-        if (in == "-o") {
+        if(in == "--Test") {
+            sourceFile = "test/test.kilt";
+        }
+        else if(in == "--PrettyPrinter") {
+            usePrettyPrinter = true;
+        }
+        else if(in == "--ASTPrinter") {
+            useAstPrinter = true;
+        }
+        else if(in == "--PrintBytecode") {
+            useBytecodePrinter = true;
+        }
+        else {
+            if(!sourceFile.empty()) {
+                std::cout << "You cannot have multiple source files & --Test\n";
+                continue;
+            }
 
+            sourceFile = in;
         }
     }
 
-    return CompileSourceFile("test.kilt");
+    if(sourceFile.empty()) {
+        std::cout << "Your must supply a source file unless you use --Test" << '\n';
+    }
+
+    return CompileSourceFile(sourceFile);
 }

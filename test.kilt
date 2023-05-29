@@ -1,8 +1,0 @@
-func main() {
-    name := getln("Input name: ");
-    age := getln("Input age: ");
-
-    println("Hey, " + name + " you are " + age + " years old!!!");
-}
-
-main();
