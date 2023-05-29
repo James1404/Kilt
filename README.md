@@ -9,14 +9,6 @@ age := getln("Input age: ");
 println("Hey, " + name + " you are " + age + " years old!!!");
 ```
 
-- [Command line](Command line)
-  - [Command line args]()
-- Syntax
-  - [Variable decleration]
-  - [Inferred decleration]
-  - [Control-Flow]
-  - [Functions]
-
 ## Command line
 
 To run the compiler you need to use the command line to run it, and pass in args.
