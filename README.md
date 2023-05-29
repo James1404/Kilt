@@ -76,3 +76,12 @@ func double(number: int): int {
 // functions are called using this syntax
 double(25);
 ```
+
+## Building
+### Build using CMake
+
+```
+cd Kilt
+mkdir build
+cmake --build build/
+```
