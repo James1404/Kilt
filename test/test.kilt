@@ -1,3 +1,2 @@
-for i := 0, i < 10, i += 1 {
-    println("hello" + to_string(i));
-}
+const f: string = "hello";
+f = 25 * 6 / (52 + 745);

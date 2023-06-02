@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Deref};
+use std::{cell::RefCell, ops::Deref, fs::{read_to_string}, io, borrow::Borrow};
 
 #[derive(Debug, Clone, PartialEq)]
 enum TokenType {
@@ -11,6 +11,7 @@ enum TokenType {
     Identifier(String),
     Plus, Minus, Multiply, Divide,
     Equal,
+    Colon, Semicolon,
 
     LParen, RParen,
     LBracket, RBracket,
@@ -84,6 +85,8 @@ fn lexer(source: &str) -> Vec<Token> {
             ']' => kind = TokenType::RBracket,
             '{' => kind = TokenType::LBrace,
             '}' => kind = TokenType::RBrace,
+            ':' => kind = TokenType::Colon,
+            ';' => kind = TokenType::Semicolon,
             '"' => {
                 while peek(current) != '"' {
                     advance(&mut current);
@@ -119,11 +122,11 @@ fn lexer(source: &str) -> Vec<Token> {
                     };
                 }
                 else if current_char(current).is_alphabetic() {
-                    while matches!(current_char(current), 'A'..='Z' | 'a'..='z' | '_') {
+                    while matches!(peek(current), 'A'..='Z' | 'a'..='z' | '_') {
                         advance(&mut current);
                     }
 
-                    kind = to_keyword(&source[start..current]);
+                    kind = to_keyword(&source[start..=current]);
                 }
             }
         }
@@ -148,22 +151,29 @@ fn lexer(source: &str) -> Vec<Token> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+enum VarType {
+    Const,
+    Let
+}
+
+#[derive(Debug, Clone, PartialEq)]
 enum AstNode {
     None,
 
     Ident(String),
-    IntNode(i64),
-    FloatNode(f64),
-    BoolNode(bool),
-    StringNode(String),
-    SequenceNode(Vec<Box<AstNode>>),
-    LetDecl(Box<AstNode>, Box<AstNode>),
-    ConstDecl(Box<AstNode>, Box<AstNode>),
-    BinaryNode(Box<AstNode>, Token, Box<AstNode>),
-    IfNode(Box<AstNode>, Box<AstNode>),
-    FunctionNode(Box<AstNode>, Vec<Box<AstNode>>, Box<AstNode>),
-    ForNode(Box<AstNode>, Box<AstNode>, Box<AstNode>, Box<AstNode>),
-    WhileNode(Box<AstNode>, Box<AstNode>),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Sequence(Vec<Box<AstNode>>),
+    VarDecl(VarType, Box<AstNode>, Box<AstNode>),
+    InferredDecl(VarType, Box<AstNode>),
+    Assign(Box<AstNode>, Box<AstNode>),
+    Binary(Box<AstNode>, Token, Box<AstNode>),
+    If(Box<AstNode>, Box<AstNode>),
+    Function(Box<AstNode>, Vec<Box<AstNode>>, Box<AstNode>),
+    For(Box<AstNode>, Box<AstNode>, Box<AstNode>, Box<AstNode>),
+    While(Box<AstNode>, Box<AstNode>),
 }
 
 struct Parser {
@@ -171,7 +181,7 @@ struct Parser {
     token_stream: RefCell<Vec<Token>>
 }
 
-fn precedence(token: Token) -> i64 {
+fn precedence(token: &Token) -> i64 {
     match token.kind {
         TokenType::Plus => 2,
         TokenType::Minus => 3,
@@ -203,23 +213,25 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Box<AstNode> {
-        Box::new(AstNode::None)
+        let literal = self.literal();
+        self.number(literal, 0)
     }
 
     fn number(&mut self, mut left: Box<AstNode>, min_precedence: i64) -> Box<AstNode> {
-        let mut start = self.current().clone();
+        let mut start = self.current();
 
-        while precedence(start) >= min_precedence {
+        while precedence(&start) >= min_precedence {
             let op = start;
             self.advance();
             let mut right = self.literal();
             start = self.current();
-            while precedence(start) > precedence(op) {
-                right = self.number(right, precedence(op) +
-                    if precedence(self.current()) > precedence(op) { 1 } else { 0 });
+            while precedence(&start) > precedence(&op) {
+                let current = &self.current();
+                right = self.number(right, precedence(&op) +
+                    if precedence(current) > precedence(&op) { 1 } else { 0 });
                 start = self.current();
             }
-            left = Box::new(AstNode::BinaryNode(left, op, right));
+            left = Box::new(AstNode::Binary(left, op, right));
         }
 
         left
@@ -227,11 +239,14 @@ impl Parser {
 
     fn literal(&mut self) -> Box<AstNode> {
         let start = self.current();
+        self.advance();
         Box::new(
             match start.kind {
                 TokenType::Identifier(value) => AstNode::Ident(value),
-                TokenType::Int(value) => AstNode::IntNode(value),
-                TokenType::Float(value) => AstNode::FloatNode(value),
+                TokenType::Int(value) => AstNode::Int(value),
+                TokenType::Float(value) => AstNode::Float(value),
+                TokenType::String(value) => AstNode::String(value),
+                TokenType::Bool(value) => AstNode::Bool(value),
                 TokenType::LParen => {
                     let expr = self.expression();
                     if self.expect(TokenType::RParen) {
@@ -249,29 +264,42 @@ impl Parser {
     fn statement(&mut self) -> Box<AstNode> {
         match self.current().kind {
             TokenType::If => {
+                self.advance();
+
                 let cond =  self.expression();
                 let body = self.scope();
 
-                return Box::new(AstNode::IfNode(cond, body));
+                return Box::new(AstNode::If(cond, body));
             },
             TokenType::For => {
+                self.advance();
+
                 let init = self.variable_decleration();
                 let cond = self.expression();
                 let incr = self.expression();
                 let body = self.scope();
             
-                return Box::new(AstNode::ForNode(init, cond, incr, body));
+                return Box::new(AstNode::For(init, cond, incr, body));
             },
             TokenType::While => {
+                self.advance();
                 let cond = self.expression();
                 let body = self.scope();
             
-                return Box::new(AstNode::WhileNode(cond, body));
+                return Box::new(AstNode::While(cond, body));
             },
-            _ => {}
+            TokenType::Let | TokenType::Const => {
+                let decl = self.variable_decleration();
+                if self.expect(TokenType::Semicolon) {
+                    return decl;
+                }
+            }
+            _ => {
+                return self.variable_assignment();
+            }
         }
 
-        Box::new(AstNode::None)
+        return Box::new(AstNode::None);
     }
 
     fn ident(&mut self) -> Box<AstNode> {
@@ -289,17 +317,39 @@ impl Parser {
         Box::new(AstNode::None)
     }
 
+    fn variable_assignment(&mut self) -> Box<AstNode> {
+        let id = self.ident();
+        if self.expect(TokenType::Equal) {
+            let value = self.expression();
+            return Box::new(AstNode::Assign(id, value));
+        }
+
+        Box::new(AstNode::None)
+    }
+
     fn variable_decleration(&mut self) -> Box<AstNode> {
         let start = self.current();
         if self.expect(TokenType::Let) || self.expect(TokenType::Const) {
             let id = self.ident();
-            if self.expect(TokenType::Equal) {
-                let value = self.expression();
+            if self.expect(TokenType::Colon) {
+                let kind = self.ident();
 
-                match start.kind {
-                    TokenType::Let => return Box::new(AstNode::LetDecl(id, value)),
-                    TokenType::Const => return Box::new(AstNode::ConstDecl(id, value)),
-                    _ => {}
+                if self.expect(TokenType::Equal) {
+                    let value = self.expression();
+    
+                    let mut seq: Vec<Box<AstNode>> = Vec::new();
+
+                    let vartype: VarType;
+                    match start.kind {
+                        TokenType::Let => vartype = VarType::Let,
+                        TokenType::Const => vartype = VarType::Const,
+                        _ => vartype = VarType::Let
+                    }
+
+                    seq.push(Box::new(AstNode::VarDecl(vartype, id.clone(), kind.clone())));
+                    seq.push(Box::new(AstNode::Assign(id.clone(), value.clone())));
+
+                    return Box::new(AstNode::Sequence(seq));
                 }
             }
         }
@@ -311,13 +361,12 @@ impl Parser {
         let mut list: Vec<Box<AstNode>> = Vec::new();
 
         while {
-            list.push(self.statement());
-            *list.last().unwrap().deref() == AstNode::None
+            let stmt = self.statement();
+            if *stmt != AstNode::None { list.push(stmt.clone()); }
+            *stmt != AstNode::None
         } {}
 
-        list.pop();
-
-        Box::new(AstNode::SequenceNode(list))
+        Box::new(AstNode::Sequence(list))
     }
 
     fn scope(&mut self) -> Box<AstNode> {
@@ -342,7 +391,7 @@ impl Parser {
             token_stream: RefCell::new(token_stream)
         };
 
-        p.scope()
+        p.sequence()
     }
 }
 
@@ -360,12 +409,15 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
     }
 
     match tree.as_ref() {
+        AstNode::None => println_tab!(tab, "Invalid node"),
+
         AstNode::Ident(value) => println_tab!(tab, "{}", value),
-        AstNode::IntNode(value) => println_tab!(tab, "{}", value),
-        AstNode::FloatNode(value) => println_tab!(tab, "{}", value),
-        AstNode::BoolNode(value) => println_tab!(tab, "{}", value),
-        AstNode::StringNode(value) => println_tab!(tab, "{}", value),
-        AstNode::SequenceNode(children) => {
+        AstNode::Int(value) => println_tab!(tab, "{}", value),
+        AstNode::Float(value) => println_tab!(tab, "{}", value),
+        AstNode::Bool(value) => println_tab!(tab, "{}", value),
+        AstNode::String(value) => println_tab!(tab, "\"{}\"", value),
+
+        AstNode::Sequence(children) => {
             println_tab!(tab, "Sequence");
             tab += 1;
             for node in children {
@@ -373,32 +425,55 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
             }
         },
 
-        AstNode::LetDecl(id, value) => {
-            println_tab!(tab, "Let");
+        AstNode::VarDecl(kind, id, valuekind) => {
+            println_tab!(tab, "Decl");
+            tab += 1;
+            match kind {
+                VarType::Const => {
+                    println_tab!(tab, "Const");
+                },
+                VarType::Let => {
+                    println_tab!(tab, "Let");
+                },
+            }
+            print_ast(id, tab);
+            print_ast(valuekind, tab);
+        },
+        AstNode::InferredDecl(kind, id) => {
+            println_tab!(tab, "Infereed Decl");
+            tab += 1;
+            match kind {
+                VarType::Const => {
+                    println_tab!(tab, "Const");
+                },
+                VarType::Let => {
+                    println_tab!(tab, "Let");
+                },
+            }
+            print_ast(id, tab);
+        },
+
+        AstNode::Assign(id, value) => {
+            println_tab!(tab, "Assign");
             tab += 1;
             print_ast(id, tab);
             print_ast(value, tab);
         },
-        AstNode::ConstDecl(id, value) => {
-            println_tab!(tab, "Const");
-            tab += 1;
-            print_ast(id, tab);
-            print_ast(value, tab);
-        },
-        AstNode::BinaryNode(left, op, right) => {
+
+        AstNode::Binary(left, op, right) => {
             println_tab!(tab, "Binary");
             tab += 1;
-            print_ast(left, tab);
             println_tab!(tab, "{:?}", op.kind);
+            print_ast(left, tab);
             print_ast(right, tab);
         },
-        AstNode::IfNode(cond, body) => {
+        AstNode::If(cond, body) => {
             println_tab!(tab, "If");
             tab += 1;
             print_ast(cond, tab);
             print_ast(body, tab);
         },
-        AstNode::FunctionNode(id, args, body) => {
+        AstNode::Function(id, args, body) => {
             println_tab!(tab, "Function");
             tab += 1;
             for node in args {
@@ -407,7 +482,7 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
             print_ast(id, tab);
             print_ast(body, tab);
         },
-        AstNode::ForNode(init, cond, incr, body) => {
+        AstNode::For(init, cond, incr, body) => {
             println_tab!(tab, "For");
             tab += 1;
             print_ast(init, tab);
@@ -415,18 +490,23 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
             print_ast(incr, tab);
             print_ast(body, tab);
         },
-        _ => println_tab!(tab, "Invalid Node Types")
+        AstNode::While(cond, body) => {
+            println_tab!(tab, "While");
+            tab += 1;
+            print_ast(cond, tab);
+            print_ast(body, tab);
+        }
     }
 }
 
-fn main() {
-    let token_stream = lexer(r#"
-    if true {
-
-    }
-
-    "#);
+fn main() -> io::Result<()> {
+    let source = read_to_string("test/test.kilt").unwrap();
+    
+    let token_stream = lexer(&source.as_str());
+    println!("{:?}", token_stream);
     
     let ast = Parser::new(token_stream);
     print_ast(&ast, 0);
+
+    Ok(())
 }
