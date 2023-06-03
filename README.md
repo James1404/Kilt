@@ -11,8 +11,8 @@ println("Hey, " + name + " you are " + age + " years old!!!");
 
 ## TODO
 - [x] Implement lexer
-- [ ] Implement parser
-- [ ] Implement AST printer
+- [x] Implement parser
+- [x] Implement AST printer
 - [ ] Implement typechecking
 - [ ] Implement c code generation
 - [ ] Implement bytecode generation
