@@ -1,4 +1,5 @@
-use std::{cell::RefCell, ops::Deref, fs::{read_to_string}, io, borrow::Borrow};
+use core::panic;
+use std::{cell::RefCell, fs::*, io, io::prelude::*, process::Command, borrow::Borrow};
 
 #[derive(Debug, Clone, PartialEq)]
 enum TokenType {
@@ -33,10 +34,22 @@ struct Token {
 }
 
 macro_rules! error {
-    ($t:expr, $($arg:tt)*) => {
-        print!("Error [Line: {}, Loc: {}]", $t.line, $t.location);
+    ($t:expr, $($arg:tt)*) => {{
+        print!("Error [Line: {}, Loc: {}]: ", $t.line, $t.location);
         println!($($arg)*);
-    };
+    }};
+}
+
+macro_rules! error_ast {
+    ($t:expr, $($arg:tt)*) => {{
+        match $t {
+            AstNode::Ident(value) => {
+                print!("Error [Line: {}, Loc: {}]: ", value.line, value.location);
+            },
+            _ => {}
+        }
+        println!($($arg)*);
+    }};
 }
 
 fn to_keyword(id: &str) -> TokenType {
@@ -57,6 +70,7 @@ fn lexer(source: &str) -> Vec<Token> {
     let mut token_stream: Vec<Token> = Vec::new();
 
     let mut line = 1 as u64;
+    let mut location = 0 as usize;
 
     let mut current = 0 as usize;
     loop {
@@ -67,7 +81,7 @@ fn lexer(source: &str) -> Vec<Token> {
         let start = current;
         let mut kind = TokenType::None;
 
-        let advance = | current: &mut usize | { if *current < source.len() { *current += 1; } };
+        let advance = | current: &mut usize, location: &mut usize | { if *current < source.len() { *current += 1; *location += 1; } };
         let current_char = move | current: usize | -> char { source.chars().nth(current).unwrap() };
         let peek = move | current: usize | -> char { source.chars().nth(current + 1).unwrap() };
 
@@ -89,41 +103,43 @@ fn lexer(source: &str) -> Vec<Token> {
             ';' => kind = TokenType::Semicolon,
             '"' => {
                 while peek(current) != '"' {
-                    advance(&mut current);
+                    advance(&mut current, &mut location);
                 }
 
-                advance(&mut current);
+                advance(&mut current, &mut location);
                 kind = TokenType::String(source[start+1..current].to_string());
             }
             '\n' => {
                 line += 1;
-                advance(&mut current);
+                location = 0;
+
+                advance(&mut current, &mut location);
                 continue;
             },
             ' ' | '\t' | '\r' => {
-                advance(&mut current);
+                advance(&mut current, &mut location);
                 continue;
             },
             _ => {
                 if current_char(current).is_numeric() {
                     let mut is_float = false;
-                    while current_char(current).is_numeric() {
-                        advance(&mut current);
+                    while peek(current).is_numeric() {
+                        advance(&mut current, &mut location);
                         if current_char(current) == '.' {
-                            advance(&mut current);
+                            advance(&mut current, &mut location);
                             is_float = true;
                         }
                     }
 
                     kind = if is_float {
-                        TokenType::Float(source[start..current].parse::<f64>().unwrap())
+                        TokenType::Float(source[start..=current].parse::<f64>().unwrap())
                     } else {
-                        TokenType::Int(source[start..current].parse::<i64>().unwrap())
+                        TokenType::Int(source[start..=current].parse::<i64>().unwrap())
                     };
                 }
                 else if current_char(current).is_alphabetic() {
                     while matches!(peek(current), 'A'..='Z' | 'a'..='z' | '_') {
-                        advance(&mut current);
+                        advance(&mut current, &mut location);
                     }
 
                     kind = to_keyword(&source[start..=current]);
@@ -133,12 +149,12 @@ fn lexer(source: &str) -> Vec<Token> {
 
         let t = Token {
             line: line,
-            location: current,
+            location: location,
             kind: kind
         };
 
         token_stream.push(t);
-        advance(&mut current);
+        advance(&mut current, &mut location);
     }
 
     token_stream.push(Token {
@@ -160,7 +176,7 @@ enum VarType {
 enum AstNode {
     None,
 
-    Ident(String),
+    Ident(Token),
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -170,8 +186,9 @@ enum AstNode {
     InferredDecl(VarType, Box<AstNode>),
     Assign(Box<AstNode>, Box<AstNode>),
     Binary(Box<AstNode>, Token, Box<AstNode>),
-    If(Box<AstNode>, Box<AstNode>),
     Function(Box<AstNode>, Vec<Box<AstNode>>, Box<AstNode>),
+    Call(Box<AstNode>, Vec<Box<AstNode>>),
+    If(Box<AstNode>, Box<AstNode>),
     For(Box<AstNode>, Box<AstNode>, Box<AstNode>, Box<AstNode>),
     While(Box<AstNode>, Box<AstNode>),
 }
@@ -241,8 +258,27 @@ impl Parser {
         let start = self.current();
         self.advance();
         Box::new(
-            match start.kind {
-                TokenType::Identifier(value) => AstNode::Ident(value),
+            match start.clone().kind {
+                TokenType::Identifier(value) => {
+                    let id = Box::new(AstNode::Ident(start));
+                    match *id.clone() {
+                        AstNode::Ident(t) => {
+                            if self.expect(TokenType::LParen) {
+                                let args: Vec<Box<AstNode>> = Vec::new();
+                                if self.expect(TokenType::RParen) {
+                                    AstNode::Call(id, args)
+                                } else {
+                                    error_ast!(id.borrow(), "Function call requires closing parenthesis");
+                                    AstNode::None
+                                }
+                            }
+                            else {
+                                AstNode::None
+                            }
+                        },
+                        _ => AstNode::None
+                    }
+                },
                 TokenType::Int(value) => AstNode::Int(value),
                 TokenType::Float(value) => AstNode::Float(value),
                 TokenType::String(value) => AstNode::String(value),
@@ -253,6 +289,7 @@ impl Parser {
                         *expr
                     }
                     else {
+                        error!(start, "Grouped expression must have a closing parenthesis");
                         AstNode::None
                     }
                 },
@@ -295,6 +332,18 @@ impl Parser {
                 }
             }
             _ => {
+                let assign = self.variable_assignment();
+                match assign.borrow() {
+                    AstNode::None => {},
+                    _ => return assign
+                }
+
+                let expr = self.expression();
+                match expr.borrow() {
+                    AstNode::None => {},
+                    _ => return expr
+                }
+
                 return self.variable_assignment();
             }
         }
@@ -305,10 +354,10 @@ impl Parser {
     fn ident(&mut self) -> Box<AstNode> {
         let start = self.current();
         
-        match start.kind.clone() {
+        match start.clone().kind {
             TokenType::Identifier(value) => {
-                if self.expect(start.kind) {
-                    return Box::new(AstNode::Ident(value))
+                if self.expect(start.clone().kind) {
+                    return Box::new(AstNode::Ident(start))
                 }
             },
             _ => {}
@@ -395,7 +444,7 @@ impl Parser {
     }
 }
 
-fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
+fn print_ast(tree: Box<AstNode>, mut tab: u64) {
     macro_rules! println_tab {
         ($tab:expr, $($arg:tt)*) => {
             {
@@ -411,7 +460,7 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
     match tree.as_ref() {
         AstNode::None => println_tab!(tab, "Invalid node"),
 
-        AstNode::Ident(value) => println_tab!(tab, "{}", value),
+        AstNode::Ident(value) => println_tab!(tab, "{:?}", value.kind),
         AstNode::Int(value) => println_tab!(tab, "{}", value),
         AstNode::Float(value) => println_tab!(tab, "{}", value),
         AstNode::Bool(value) => println_tab!(tab, "{}", value),
@@ -421,7 +470,7 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
             println_tab!(tab, "Sequence");
             tab += 1;
             for node in children {
-                print_ast(node, tab);
+                print_ast(node.to_owned(), tab);
             }
         },
 
@@ -436,8 +485,8 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
                     println_tab!(tab, "Let");
                 },
             }
-            print_ast(id, tab);
-            print_ast(valuekind, tab);
+            print_ast(id.to_owned(), tab);
+            print_ast(valuekind.to_owned(), tab);
         },
         AstNode::InferredDecl(kind, id) => {
             println_tab!(tab, "Infereed Decl");
@@ -450,63 +499,242 @@ fn print_ast(tree: &Box<AstNode>, mut tab: u64) {
                     println_tab!(tab, "Let");
                 },
             }
-            print_ast(id, tab);
+            print_ast(id.to_owned(), tab);
         },
 
         AstNode::Assign(id, value) => {
             println_tab!(tab, "Assign");
             tab += 1;
-            print_ast(id, tab);
-            print_ast(value, tab);
+            print_ast(id.to_owned(), tab);
+            print_ast(value.to_owned(), tab);
         },
 
         AstNode::Binary(left, op, right) => {
             println_tab!(tab, "Binary");
             tab += 1;
             println_tab!(tab, "{:?}", op.kind);
-            print_ast(left, tab);
-            print_ast(right, tab);
+            print_ast(left.to_owned(), tab);
+            print_ast(right.to_owned(), tab);
         },
-        AstNode::If(cond, body) => {
-            println_tab!(tab, "If");
-            tab += 1;
-            print_ast(cond, tab);
-            print_ast(body, tab);
-        },
+
         AstNode::Function(id, args, body) => {
             println_tab!(tab, "Function");
             tab += 1;
             for node in args {
-                print_ast(node, tab);
+                print_ast(node.to_owned(), tab);
             }
-            print_ast(id, tab);
-            print_ast(body, tab);
+            print_ast(id.to_owned(), tab);
+            print_ast(body.to_owned(), tab);
+        },
+        AstNode::Call(id, args) => {
+            println_tab!(tab, "Call");
+            tab += 1;
+
+            print_ast(id.to_owned(), tab);
+            for node in args {
+                print_ast(node.to_owned(), tab);
+            }
+        },
+
+        AstNode::If(cond, body) => {
+            println_tab!(tab, "If");
+            tab += 1;
+            print_ast(cond.to_owned(), tab);
+            print_ast(body.to_owned(), tab);
         },
         AstNode::For(init, cond, incr, body) => {
             println_tab!(tab, "For");
             tab += 1;
-            print_ast(init, tab);
-            print_ast(cond, tab);
-            print_ast(incr, tab);
-            print_ast(body, tab);
+            print_ast(init.to_owned(), tab);
+            print_ast(cond.to_owned(), tab);
+            print_ast(incr.to_owned(), tab);
+            print_ast(body.to_owned(), tab);
         },
         AstNode::While(cond, body) => {
             println_tab!(tab, "While");
             tab += 1;
-            print_ast(cond, tab);
-            print_ast(body, tab);
+            print_ast(cond.to_owned(), tab);
+            print_ast(body.to_owned(), tab);
         }
     }
+}
+
+fn emit_c_code(tree: Box<AstNode>) -> String {
+    let mut r = "".to_string();
+
+    match tree.as_ref() {
+        AstNode::None => println!("Invalid node"),
+
+        AstNode::Ident(value) => {
+            if let TokenType::Identifier(value) = value.to_owned().kind {
+                r.push_str(value.as_str());
+            }
+        },
+        AstNode::Int(value) => r.push_str(value.to_string().as_str()),
+        AstNode::Float(value) => r.push_str(value.to_string().as_str()),
+        AstNode::Bool(value) => {
+            r.push_str(
+                if *value {
+                    "true"
+                } else {
+                    "false"
+                }
+            );
+        },
+        AstNode::String(value) => {
+            r.push('"');
+            r.push_str(value.to_string().as_str());
+            r.push('"');
+        },
+
+        AstNode::Sequence(children) => {
+            for node in children {
+                r.push_str(emit_c_code(node.to_owned()).as_str());
+                r.push('\n');
+            }
+        },
+
+        AstNode::VarDecl(kind, id, valuekind) => {
+            if let VarType::Const = kind {
+                r.push_str("const ");
+            }
+
+            r.push_str(emit_c_code(valuekind.to_owned()).as_str());
+            r.push(' ');
+            r.push_str(emit_c_code(id.to_owned()).as_str());
+            r.push(';');
+        },
+        AstNode::InferredDecl(kind, id) => {
+
+        },
+
+        AstNode::Assign(id, value) => {
+            r.push_str(emit_c_code(id.to_owned()).as_str());
+            r.push_str("=");
+            r.push_str(emit_c_code(value.to_owned()).as_str());
+            r.push_str(";");
+        },
+
+        AstNode::Binary(left, op, right) => {
+            r.push_str(emit_c_code(left.to_owned()).as_str());
+
+            match op.kind {
+                TokenType::Plus => r.push_str("+"),
+                TokenType::Minus => r.push_str("-"),
+                TokenType::Multiply => r.push_str("*"),
+                TokenType::Divide => r.push_str("/"),
+                _ => {}
+            };
+            r.push_str(emit_c_code(right.to_owned()).as_str());
+        },
+
+        AstNode::Function(id, args, body) => {
+            
+        },
+        AstNode::Call(id, args) => {
+            r.push_str(emit_c_code(id.to_owned()).as_str());
+
+            r.push('(');
+            for arg in args {
+                r.push_str(emit_c_code(arg.to_owned()).as_str());
+            }
+            r.push(')');
+        },
+
+        AstNode::If(cond, body) => {
+            r.push_str("if (");
+            r.push_str(emit_c_code(cond.to_owned()).as_str());
+            r.push_str(")");
+            r.push_str(emit_c_code(body.to_owned()).as_str());
+        },
+        AstNode::For(init, cond, incr, body) => {
+            r.push_str("for (");
+            r.push_str(emit_c_code(init.to_owned()).as_str());
+            r.push_str(";");
+            r.push_str(emit_c_code(cond.to_owned()).as_str());
+            r.push_str(";");
+            r.push_str(emit_c_code(incr.to_owned()).as_str());
+            r.push_str(")");
+            r.push_str(emit_c_code(body.to_owned()).as_str());
+        },
+        AstNode::While(cond, body) => {
+            r.push_str("while (");
+            r.push_str(emit_c_code(cond.to_owned()).as_str());
+            r.push_str(")");
+            r.push_str(emit_c_code(body.to_owned()).as_str());
+        }
+    }
+
+    r
+}
+
+fn compile_c_code(input_files: String, tree: Box<AstNode>) -> io::Result<()> {
+    let code = format!(r"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+typedef char* string;
+
+int main() {{
+    {}
+    return 0;
+}}
+", emit_c_code(tree).as_str());
+
+    println!("{}", code);
+
+    std::fs::create_dir_all("build/temp")?;
+
+    let output_name = format!("{}_temp.c", input_files);
+
+    let mut file = File::create(output_name.clone())?;
+    file.write_all(code.as_bytes())?;
+
+    let output = Command::new("gcc")
+                            .arg(output_name.clone())
+                            .args(["-o", format!("{}", output_name.clone()).as_str()])
+                            .output();
+    
+    if !output.as_ref().unwrap().status.success() {
+        panic!("C Error: {}", String::from_utf8_lossy(&output.unwrap().stderr));
+    }
+    
+    //std::fs::remove_dir_all("build/temp")?;
+    //std::fs::remove_dir_all("build")?;
+
+    Ok(())
+}
+
+enum BytecodeInstruction {
+    None = 0,
+
+    Push, Pop,
+    Store, Load,
+
+    Add, Sub, Multiply, Divide,
+
+    CompEqual, CompNotEqual, CompLess, CompGreater, CompLessEqual, CompGreaterEqual,
+
+    Jump, JumpIfTrue, JumpIfFalse,
+    StartSubroutine, JumpSubroutine, ReturnSubroutine
+}
+
+fn emit_bytecode(tree: &mut Box<AstNode>) {
+    todo!();
 }
 
 fn main() -> io::Result<()> {
     let source = read_to_string("test/test.kilt").unwrap();
     
     let token_stream = lexer(&source.as_str());
-    println!("{:?}", token_stream);
     
     let ast = Parser::new(token_stream);
-    print_ast(&ast, 0);
+    print_ast(ast.clone(), 0);
+
+    compile_c_code(String::from("test/test.kilt"), ast)?;
 
     Ok(())
 }

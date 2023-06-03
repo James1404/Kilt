@@ -1,2 +1,8 @@
-const f: string = "hello";
-f = 25 * 6 / (52 + 745);
+let f: string = "hello";
+
+let i: int = 0;
+i = 25 * 6 / (52 + 745);
+
+if 25 * 6 {
+	f = 7;
+}
